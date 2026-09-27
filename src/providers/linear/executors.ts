@@ -1937,7 +1937,11 @@ async function resolveAssigneeFilterId(context: LinearActionContext, assigneeId:
   return String(viewer.id);
 }
 
-function buildIssuesFilter(projectId: string | undefined, assigneeId: string | undefined, updatedAfter?: string) {
+function buildIssuesFilter(
+  projectId: string | undefined,
+  assigneeId: string | undefined,
+  updatedAfter: string | undefined,
+) {
   const filter = compactObject({
     project: projectId ? { id: { eq: projectId } } : undefined,
     assignee: assigneeId ? { id: { eq: assigneeId } } : undefined,

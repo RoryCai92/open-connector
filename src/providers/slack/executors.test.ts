@@ -1078,9 +1078,21 @@ describe("Slack conversation and user extra fields", () => {
         ],
       },
     });
-    const bare = (result as { output: { conversations: Record<string, unknown>[] } }).output.conversations[1]!;
-    for (const key of ["created", "updated", "creatorId", "isShared", "contextTeamId", "lastRead", "unreadCount"]) {
-      expect(bare).not.toHaveProperty(key);
+    const output = (result as { output: { conversations: Record<string, unknown>[] } }).output;
+    const action = slackActions.find((candidate) => candidate.id === "slack.list_conversations")!;
+    expect(new Validator(action.outputSchema).validate(output).valid).toBe(true);
+    for (const key of [
+      "created",
+      "updated",
+      "creatorId",
+      "isShared",
+      "isExtShared",
+      "isOrgShared",
+      "contextTeamId",
+      "lastRead",
+      "unreadCount",
+    ]) {
+      expect(output.conversations[1]).not.toHaveProperty(key);
     }
   });
 
@@ -1127,7 +1139,9 @@ describe("Slack conversation and user extra fields", () => {
         ],
       },
     });
-    const bare = (result as { output: { users: Record<string, unknown>[] } }).output.users[1]!;
+    const output = (result as { output: { users: Record<string, unknown>[] } }).output;
+    const action = slackActions.find((candidate) => candidate.id === "slack.list_users")!;
+    expect(new Validator(action.outputSchema).validate(output).valid).toBe(true);
     for (const key of [
       "email",
       "tz",
@@ -1138,7 +1152,7 @@ describe("Slack conversation and user extra fields", () => {
       "isUltraRestricted",
       "isAppUser",
     ]) {
-      expect(bare).not.toHaveProperty(key);
+      expect(output.users[1]).not.toHaveProperty(key);
     }
   });
 });

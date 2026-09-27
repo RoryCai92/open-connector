@@ -1,5 +1,3 @@
-import { compactObject } from "../../core/cast.ts";
-
 export interface GmailMessageHeader {
   name: string;
   value: string;
@@ -48,13 +46,7 @@ export interface GmailAttachmentSummary {
   size: number;
 }
 
-export interface NormalizedGmailMessage {
-  messageId: string;
-  threadId: string;
-  labelIds: string[];
-  subject: string;
-  sender: string;
-  to: string;
+export interface NormalizedGmailMessage extends GmailMessageSummary {
   preview: {
     subject: string;
     body: string;
@@ -62,7 +54,6 @@ export interface NormalizedGmailMessage {
   payload: GmailMessagePart | null;
   messageText: string;
   attachmentList: GmailAttachmentSummary[];
-  messageTimestamp: string;
   raw?: string;
 }
 
@@ -102,12 +93,10 @@ export function summarizeGmailMessage(resource: GmailMessageResource): GmailMess
     sender: readHeader(headers, "From"),
     to: readHeader(headers, "To"),
     messageTimestamp: toMessageTimestamp(resource.internalDate, readHeader(headers, "Date")),
-    ...compactObject({
-      historyId: resource.historyId,
-      internalDate: resource.internalDate,
-      sizeEstimate: resource.sizeEstimate,
-      snippet: resource.snippet,
-    }),
+    historyId: resource.historyId,
+    internalDate: resource.internalDate,
+    sizeEstimate: resource.sizeEstimate,
+    snippet: resource.snippet,
   };
 }
 

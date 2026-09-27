@@ -43,10 +43,10 @@ describe("granola MCP get_note", () => {
     });
   });
 
-  it("omits participants when Granola sends none", async () => {
+  it("leaves participants undefined when Granola sends none", async () => {
     client.callTool.mockResolvedValue(meetingXml(' date="2026-09-25"><summary>Notes</summary>'));
-    const result = (await granolaMcpActionHandlers.get_note({ note_id: "m1" }, context)) as { note: object };
-    expect(result.note).toMatchObject({ date: "2026-09-25" });
-    expect(result.note).not.toHaveProperty("participants");
+    await expect(granolaMcpActionHandlers.get_note({ note_id: "m1" }, context)).resolves.toEqual({
+      note: { id: "m1", title: "Standup", summary_markdown: "Notes", date: "2026-09-25" },
+    });
   });
 });

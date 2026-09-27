@@ -1,6 +1,8 @@
 import type { ExecutionContext } from "../../core/types.ts";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { validateActionInput } from "../../core/validation.ts";
+import { linearActions } from "./actions.ts";
 import { executors } from "./executors.ts";
 
 afterEach(() => vi.unstubAllGlobals());
@@ -57,5 +59,14 @@ describe("linear.list_linear_issues incremental inputs", () => {
     const fetcher = stubIssuesResponse();
     await executors["linear.list_linear_issues"]!({}, context);
     expect(sentVariables(fetcher).variables).toEqual({ includeArchived: false });
+  });
+
+  it("rejects an updated_after that is not an ISO 8601 date-time and an unknown order_by", () => {
+    const action = linearActions.find((candidate) => candidate.name === "list_linear_issues")!;
+    expect(validateActionInput(action, { updated_after: "2026-01-27T15:30:00Z", order_by: "updatedAt" }).valid).toBe(
+      true,
+    );
+    expect(validateActionInput(action, { updated_after: "last week" }).valid).toBe(false);
+    expect(validateActionInput(action, { order_by: "priority" }).valid).toBe(false);
   });
 });

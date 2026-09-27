@@ -36,11 +36,15 @@ describe("summarizeGmailMessage", () => {
     );
   });
 
-  it("omits the optional fields when Gmail does not send them", () => {
-    const summary = summarizeGmailMessage({ id: "m2", threadId: "t2", payload: { headers } });
-    expect(summary).not.toHaveProperty("historyId");
-    expect(summary).not.toHaveProperty("internalDate");
-    expect(summary).not.toHaveProperty("sizeEstimate");
-    expect(summary).not.toHaveProperty("snippet");
+  it("leaves the optional fields undefined when Gmail does not send them", () => {
+    expect(summarizeGmailMessage({ id: "m2", threadId: "t2", payload: { headers } })).toEqual({
+      messageId: "m2",
+      threadId: "t2",
+      labelIds: [],
+      subject: "Hello",
+      sender: "alice@example.com",
+      to: "bob@example.com",
+      messageTimestamp: "",
+    });
   });
 });
