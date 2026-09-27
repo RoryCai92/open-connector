@@ -43,7 +43,7 @@ export const linearMcpToolsByAction: ProviderActionSources<typeof service, strin
 };
 
 /** One tool call's text as returned plus the JSON it carried, when it carried any. */
-export interface LinearMcpToolResult {
+interface LinearMcpToolResult {
   text: string;
   payload: unknown;
 }
@@ -133,7 +133,7 @@ async function listLinearMcpToolNames(client: Client, signal: AbortSignal): Prom
 }
 
 /** Call one tool in a fresh MCP session and return its text and parsed payload. */
-export function callLinearMcpTool(
+function callLinearMcpTool(
   context: LinearMcpContext,
   phase: LinearMcpPhase,
   name: string,
@@ -149,7 +149,7 @@ export function callLinearMcpTool(
  * (structured content wins when the server sends it). Text that is not JSON
  * is not an error: the typed fields stay empty and `raw` still reaches the caller.
  */
-export function readLinearMcpToolResult(name: string, result: LinearMcpToolCall): LinearMcpToolResult {
+function readLinearMcpToolResult(name: string, result: LinearMcpToolCall): LinearMcpToolResult {
   if ("toolResult" in result) {
     return { text: JSON.stringify(result.toolResult), payload: result.toolResult };
   }
@@ -172,7 +172,7 @@ function parseJsonText(text: string): unknown {
   }
 }
 
-export function parseLinearMcpUser(payload: unknown): LinearMcpUser | undefined {
+function parseLinearMcpUser(payload: unknown): LinearMcpUser | undefined {
   const record = optionalRecord(payload);
   const user = record && (optionalRecord(record.user) ?? optionalRecord(record.viewer) ?? record);
   const id = user && pickOptionalString(user, "id", "uuid");
@@ -185,7 +185,7 @@ export function parseLinearMcpUser(payload: unknown): LinearMcpUser | undefined 
   };
 }
 
-export function parseLinearMcpIssuePage(payload: unknown): {
+function parseLinearMcpIssuePage(payload: unknown): {
   issues: LinearMcpIssue[];
   hasNextPage: boolean;
   cursor: string | null;
@@ -199,7 +199,7 @@ export function parseLinearMcpIssuePage(payload: unknown): {
   return { issues, hasNextPage, cursor };
 }
 
-export function parseLinearMcpIssue(value: unknown): LinearMcpIssue | undefined {
+function parseLinearMcpIssue(value: unknown): LinearMcpIssue | undefined {
   const record = optionalRecord(value);
   const issue = record && (optionalRecord(record.issue) ?? record);
   const id = issue && pickOptionalString(issue, "id", "identifier", "uuid");
@@ -232,7 +232,7 @@ export function parseLinearMcpIssue(value: unknown): LinearMcpIssue | undefined 
   };
 }
 
-export function parseLinearMcpComments(payload: unknown): LinearMcpComment[] {
+function parseLinearMcpComments(payload: unknown): LinearMcpComment[] {
   const record = optionalRecord(payload);
   const items = Array.isArray(payload) ? payload : looseArray(record?.comments ?? record?.nodes);
   return items.flatMap((item) => {

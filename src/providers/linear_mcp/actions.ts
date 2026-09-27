@@ -66,7 +66,7 @@ const userSchema = s.looseObject("The signed-in Linear user.", {
 });
 
 const issueSchema = s.looseObject(
-  "A Linear issue. Typed fields are lifted from the MCP record when present; unknown fields are kept as returned.",
+  "A Linear issue. Typed fields are lifted from the MCP record when present; fields not listed here are only in the action's raw text.",
   {
     id: s.nonEmptyString(
       "Issue ID as Linear MCP returned it. This may be the human identifier such as ENG-123 rather than the UUID; see identifier and uuid.",
