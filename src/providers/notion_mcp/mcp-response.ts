@@ -5,6 +5,7 @@ import {
   optionalRecord,
   optionalString,
   pickOptionalString,
+  recordOrEmpty,
 } from "../../core/cast.ts";
 
 /**
@@ -13,14 +14,14 @@ import {
  * result, and nothing here throws, because the caller keeps the raw text beside the typed fields.
  */
 
-export interface NotionMcpUser {
+interface NotionMcpUser {
   id?: string;
   name?: string;
   email?: string;
   type?: string;
 }
 
-export interface NotionMcpSearchResult {
+interface NotionMcpSearchResult {
   id?: string;
   title?: string;
   url?: string;
@@ -29,12 +30,13 @@ export interface NotionMcpSearchResult {
   path?: string;
 }
 
-export interface NotionMcpSearch {
+interface NotionMcpSearch {
+  type: string | undefined;
   results: NotionMcpSearchResult[];
   notices: string[];
 }
 
-export interface NotionMcpPage {
+interface NotionMcpPage {
   title?: string;
   url?: string;
   page_last_edited_at?: string;
@@ -43,7 +45,7 @@ export interface NotionMcpPage {
   truncated: boolean;
 }
 
-export interface NotionMcpComment {
+interface NotionMcpComment {
   id?: string;
   discussion_id?: string;
   plain_text?: string;
@@ -51,20 +53,35 @@ export interface NotionMcpComment {
   created_by?: NotionMcpUser;
 }
 
-export interface NotionMcpToolAccess {
-  tool: string;
-  status?: string;
-  restricted_parameters: string[];
+interface NotionMcpToolRestriction {
+  parameter: string;
+  reason: string;
 }
 
-const pageTag = /<page\b([^>]*)>/i;
-const propertiesBlock = /<properties\b[^>]*>([\s\S]*?)<\/properties>/i;
-const contentBlock = /<content\b([^>]*)>([\s\S]*?)<\/content>/i;
-const contentOpening = /<content\b[^>]*>/i;
-const discussionBlock = /<discussion\b([^>]*)>([\s\S]*?)<\/discussion>/gi;
-const commentTag = /<comment\b([^>]*)>([\s\S]*?)<\/comment>/gi;
-const tagAttribute = /([\w:-]+)\s*=\s*"([^"]*)"/g;
-const anyTag = /<[^>]+>/g;
+interface NotionMcpToolAccess {
+  tool: string;
+  status: string | undefined;
+  restricted_parameters: NotionMcpToolRestriction[];
+  upgrade_url: string | undefined;
+  full_version_url: string | undefined;
+  landing_page_url: string | undefined;
+  landing_page_action: string | undefined;
+}
+
+/** One `<tag ...>body</tag>` element, with its position in the scanned text. */
+interface XmlBlock {
+  attributes: string;
+  body: string;
+  start: number;
+  end: number;
+}
+
+// Tag and attribute patterns exclude `<` and use a lookbehind so each scan is linear in the text length: page
+// content and comments are user-written, and a quadratic pattern would block the event loop on a crafted answer.
+const pageTag = /<page\b([^<>]*)>/i;
+const contentOpening = /<content\b[^<>]*>/i;
+const tagAttribute = /(?<![\w:-])([\w:-]+)\s*=\s*"([^"]*)"/g;
+const anyTag = /<[^<>]+>/g;
 const namedEntities: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'" };
 
 /** Notion's tools answer JSON in a text block on most calls and prose or XML fragments on the rest. */
@@ -80,35 +97,40 @@ export function decodeNotionToolText(text: string): unknown {
   return text;
 }
 
-/** Users as notion-get-users lists them: `{results: [{type, id, name, email}], has_more}`. */
-export function parseNotionUsers(value: unknown): NotionMcpUser[] {
-  return findList(value, "results", "users").flatMap((item) => {
+/**
+ * The connected user as notion-get-users answers `user_id: "self"`: the first listed user of
+ * `{results: [{type, id, name, email}], has_more}` that carries an ID or an email, or the answer itself when it is a
+ * single user.
+ */
+export function parseNotionSelf(value: unknown): NotionMcpUser | undefined {
+  const users = findList(value, "results", "users").flatMap((item) => {
     const user = readUser(item);
     return user ? [user] : [];
   });
+  const candidates = users.length > 0 ? users : [readUser(value)];
+  return candidates.find((user) => user?.id !== undefined || user?.email !== undefined);
 }
 
-/** The connected user: the first listed user that carries an ID or an email. */
-export function parseNotionSelf(value: unknown): NotionMcpUser | undefined {
-  return parseNotionUsers(value).find((user) => user.id !== undefined || user.email !== undefined);
-}
-
-/** Search results plus the server's notices, such as a filter dropped on the connected plan. */
+/**
+ * Search results plus the server's notices, such as a filter dropped on the connected plan, and the search `type`
+ * the server reports: `workspace_search`, or `ai_search` when it routed a keyword query to Notion AI search.
+ */
 export function parseNotionSearch(value: unknown): NotionMcpSearch {
+  const record = optionalRecord(value);
   const results = findList(value, "results", "pages", "items").flatMap((item) => {
-    const record = optionalRecord(item);
-    if (!record) return [];
-    const result: NotionMcpSearchResult = compactObject({
-      id: pickOptionalString(record, "id"),
-      title: readTitle(record),
-      url: pickOptionalString(record, "url"),
-      type: pickOptionalString(record, "type"),
-      timestamp: pickOptionalString(record, "timestamp", "last_edited_time"),
-      path: pickOptionalString(record, "path"),
+    const result = optionalRecord(item);
+    if (!result) return [];
+    const typed: NotionMcpSearchResult = compactObject({
+      id: pickOptionalString(result, "id"),
+      title: readTitle(result),
+      url: pickOptionalString(result, "url"),
+      type: pickOptionalString(result, "type"),
+      timestamp: pickOptionalString(result, "timestamp", "last_edited_time"),
+      path: pickOptionalString(result, "path"),
     });
-    return [result];
+    return [typed];
   });
-  return { results, notices: readNotices(optionalRecord(value)?.notices) };
+  return { type: record && pickOptionalString(record, "type"), results, notices: readNotices(record?.notices) };
 }
 
 /**
@@ -122,11 +144,11 @@ export function parseNotionPage(value: unknown): NotionMcpPage {
   const text = record ? pickOptionalString(record, "text", "content", "markdown", "body") : optionalString(value);
   const tag = text === undefined ? null : pageTag.exec(text);
   const attributes = tag ? readAttributes(tag[1]!) : {};
-  const properties = text === undefined ? null : propertiesBlock.exec(text);
-  const content = text === undefined ? null : contentBlock.exec(text);
+  const properties = text === undefined ? undefined : nextXmlBlock(text, "properties", 0);
+  const content = text === undefined ? undefined : nextXmlBlock(text, "content", 0);
   let body: string | undefined;
   if (content) {
-    body = content[2]!;
+    body = content.body;
   } else if (text !== undefined) {
     // No closed content block: an unclosed one takes the rest; a bare answer is the whole text.
     const opening = contentOpening.exec(text);
@@ -139,13 +161,13 @@ export function parseNotionPage(value: unknown): NotionMcpPage {
       page_last_edited_at:
         (record && pickOptionalString(record, "page_last_edited_at", "last_edited_time")) ??
         optionalString(attributes.page_last_edited_at ?? attributes.last_edited_time),
-      properties: properties ? unescapeEntities(properties[1]!).trim() : undefined,
+      properties: properties ? unescapeEntities(properties.body).trim() : undefined,
       content: body === undefined ? undefined : unescapeEntities(body).trim(),
     }),
     truncated:
       record?.truncated === true ||
       isTrue(attributes.truncated) ||
-      (content !== null && isTrue(readAttributes(content[1]!).truncated)),
+      (content !== undefined && isTrue(readAttributes(content.attributes).truncated)),
   };
 }
 
@@ -173,21 +195,31 @@ export function parseNotionComments(value: unknown): NotionMcpComment[] {
 }
 
 /**
- * The plan report notion-get-tool-access answers: `{current_tool_access: [{tool, status, restricted_parameters}]}`,
- * or the same entries keyed by tool name.
+ * The plan report notion-get-tool-access answers: `{current_tool_access: {<tool>: {status, restricted_parameters?,
+ * upgrade_url?, full_version_url?, landing_page_url?, landing_page_action?}}}`, keyed by each tool's base name
+ * (`search`, `ai_search`), where `restricted_parameters` maps a parameter path such as `filters.title_only` to the
+ * reason it is unavailable. The reason is kept as text and never interpreted.
  */
 export function parseNotionToolAccess(value: unknown): NotionMcpToolAccess[] {
-  const record = optionalRecord(value);
-  const access = record?.current_tool_access ?? record?.tools ?? value;
-  const listed = looseArray(access).flatMap((item) => {
+  const access = recordOrEmpty(optionalRecord(value)?.current_tool_access);
+  return Object.entries(access).flatMap(([tool, item]) => {
     const entry = optionalRecord(item);
-    const tool = entry ? pickOptionalString(entry, "tool", "name", "tool_name") : undefined;
-    return entry && tool ? [readToolAccess(tool, entry)] : [];
-  });
-  if (listed.length > 0 || Array.isArray(access)) return listed;
-  return Object.entries(optionalRecord(access) ?? {}).flatMap(([tool, item]) => {
-    const entry = optionalRecord(item);
-    return entry && "restricted_parameters" in entry ? [readToolAccess(tool, entry)] : [];
+    if (!entry) return [];
+    const restrictions = Object.entries(recordOrEmpty(entry.restricted_parameters)).map(([parameter, reason]) => ({
+      parameter,
+      reason: optionalRawString(reason) ?? JSON.stringify(reason),
+    }));
+    return [
+      {
+        tool,
+        status: pickOptionalString(entry, "status"),
+        restricted_parameters: restrictions,
+        upgrade_url: pickOptionalString(entry, "upgrade_url"),
+        full_version_url: pickOptionalString(entry, "full_version_url"),
+        landing_page_url: pickOptionalString(entry, "landing_page_url"),
+        landing_page_action: pickOptionalString(entry, "landing_page_action"),
+      },
+    ];
   });
 }
 
@@ -271,11 +303,11 @@ function readXmlComments(text: string): NotionMcpComment[] {
   const comments: NotionMcpComment[] = [];
   let remainder = "";
   let last = 0;
-  for (const block of text.matchAll(discussionBlock)) {
-    remainder += text.slice(last, block.index);
-    last = block.index + block[0].length;
-    const discussionId = optionalString(readAttributes(block[1]!).id ?? readAttributes(block[1]!).discussion_id);
-    comments.push(...readXmlCommentTags(block[2]!, discussionId));
+  for (const block of xmlBlocks(text, "discussion")) {
+    remainder += text.slice(last, block.start);
+    last = block.end;
+    const attributes = readAttributes(block.attributes);
+    comments.push(...readXmlCommentTags(block.body, optionalString(attributes.id ?? attributes.discussion_id)));
   }
   remainder += text.slice(last);
   comments.push(...readXmlCommentTags(remainder, undefined));
@@ -283,8 +315,8 @@ function readXmlComments(text: string): NotionMcpComment[] {
 }
 
 function readXmlCommentTags(text: string, discussionId: string | undefined): NotionMcpComment[] {
-  return [...text.matchAll(commentTag)].flatMap((match) => {
-    const attributes = readAttributes(match[1]!);
+  return xmlBlocks(text, "comment").flatMap((block) => {
+    const attributes = readAttributes(block.attributes);
     const createdBy: NotionMcpUser = compactObject({
       id: optionalString(attributes.author_id ?? attributes.user_id ?? attributes.created_by_id),
       name: optionalString(attributes.author ?? attributes.author_name ?? attributes.created_by ?? attributes.user),
@@ -293,7 +325,7 @@ function readXmlCommentTags(text: string, discussionId: string | undefined): Not
     const comment: NotionMcpComment = compactObject({
       id: optionalString(attributes.id ?? attributes.comment_id),
       discussion_id: optionalString(attributes.discussion_id) ?? discussionId,
-      plain_text: optionalString(unescapeEntities(match[2]!.replace(anyTag, " ")).replace(/[ \t]{2,}/g, " ")),
+      plain_text: optionalString(unescapeEntities(block.body.replace(anyTag, " ")).replace(/[ \t]{2,}/g, " ")),
       created_time: optionalString(
         attributes.created_time ?? attributes.created_at ?? attributes.timestamp ?? attributes.time ?? attributes.date,
       ),
@@ -303,16 +335,35 @@ function readXmlCommentTags(text: string, discussionId: string | undefined): Not
   });
 }
 
-function readToolAccess(tool: string, entry: Record<string, unknown>): NotionMcpToolAccess {
-  const restricted = looseArray(entry.restricted_parameters).flatMap((item) => {
-    const name = optionalString(item) ?? pickOptionalString(optionalRecord(item) ?? {}, "name", "parameter", "field");
-    return name ? [name] : [];
-  });
-  return compactObject({
-    tool,
-    status: pickOptionalString(entry, "status"),
-    restricted_parameters: restricted,
-  }) as NotionMcpToolAccess;
+/** Every `<tag ...>body</tag>` element in order, each scan resuming after the previous element. */
+function xmlBlocks(text: string, tag: string): XmlBlock[] {
+  const blocks: XmlBlock[] = [];
+  for (let block = nextXmlBlock(text, tag, 0); block; block = nextXmlBlock(text, tag, block.end)) {
+    blocks.push(block);
+  }
+  return blocks;
+}
+
+/**
+ * The first `<tag ...>body</tag>` element at or after `from`, ending at the first closing tag after its opening.
+ * When that opening has no closing tag after it, no later opening can have one either, so the scan stops instead of
+ * retrying every opening the way a lazy `[\s\S]*?` pattern does.
+ */
+function nextXmlBlock(text: string, tag: string, from: number): XmlBlock | undefined {
+  const opening = new RegExp(`<${tag}\\b([^<>]*)>`, "gi");
+  opening.lastIndex = from;
+  const open = opening.exec(text);
+  if (!open) return undefined;
+  const closing = new RegExp(`</${tag}>`, "gi");
+  closing.lastIndex = opening.lastIndex;
+  const close = closing.exec(text);
+  if (!close) return undefined;
+  return {
+    attributes: open[1]!,
+    body: text.slice(opening.lastIndex, close.index),
+    start: open.index,
+    end: closing.lastIndex,
+  };
 }
 
 /** The attributes of one tag's attribute text, names lower-cased and values entity-decoded. */
@@ -331,8 +382,12 @@ function isTrue(value: string | undefined): boolean {
 /** The XML entities Notion escapes inside its envelopes; the Markdown itself is left alone. */
 function unescapeEntities(text: string): string {
   return text.replace(/&(#x[0-9a-f]+|#\d+|amp|lt|gt|quot|apos);/gi, (entity, body: string) => {
-    if (body.startsWith("#x") || body.startsWith("#X")) return String.fromCodePoint(Number.parseInt(body.slice(2), 16));
-    if (body.startsWith("#")) return String.fromCodePoint(Number.parseInt(body.slice(1), 10));
+    if (body.startsWith("#")) {
+      const hex = body[1] === "x" || body[1] === "X";
+      const code = Number.parseInt(body.slice(hex ? 2 : 1), hex ? 16 : 10);
+      // A number past U+10FFFF names no character, and String.fromCodePoint throws on it; keep the entity as text.
+      return code <= 0x10ffff ? String.fromCodePoint(code) : entity;
+    }
     return namedEntities[body.toLowerCase()] ?? entity;
   });
 }

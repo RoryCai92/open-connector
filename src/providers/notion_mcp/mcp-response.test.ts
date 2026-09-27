@@ -24,8 +24,19 @@ describe("Notion MCP response readers", () => {
     expect(parseNotionSelf("no users")).toBeUndefined();
   });
 
+  it("reads the connected user when notion-get-users answers a single user object", () => {
+    expect(parseNotionSelf({ object: "user", type: "person", id: "u-3", name: "Grace" })).toEqual({
+      type: "person",
+      id: "u-3",
+      name: "Grace",
+    });
+    expect(parseNotionSelf({ type: "bot" })).toBeUndefined();
+    expect(parseNotionSelf({ unexpected: true })).toBeUndefined();
+  });
+
   it("reads search results with absent fields absent and notices as text", () => {
     const value = {
+      type: "workspace_search",
       results: [
         {
           id: "p-1",
@@ -42,6 +53,7 @@ describe("Notion MCP response readers", () => {
       notices: ["filters.edited_by_user_ids requires a Business plan", { parameter: "filters.created_date_range" }, 7],
     };
     expect(parseNotionSearch(value)).toEqual({
+      type: "workspace_search",
       results: [
         {
           id: "p-1",
@@ -56,11 +68,12 @@ describe("Notion MCP response readers", () => {
       ],
       notices: ["filters.edited_by_user_ids requires a Business plan", "filters.created_date_range"],
     });
-    expect(parseNotionSearch({ pages: [{ id: "p-4" }], notices: "one sentence" })).toEqual({
+    expect(parseNotionSearch({ type: "ai_search", pages: [{ id: "p-4" }], notices: "one sentence" })).toEqual({
+      type: "ai_search",
       results: [{ id: "p-4" }],
       notices: ["one sentence"],
     });
-    expect(parseNotionSearch("no results")).toEqual({ results: [], notices: [] });
+    expect(parseNotionSearch("no results")).toEqual({ type: undefined, results: [], notices: [] });
   });
 
   it("reads the page envelope from the text form, unescaping entities and keeping the truncated mark", () => {
@@ -94,6 +107,31 @@ describe("Notion MCP response readers", () => {
       content: "Body",
       truncated: true,
     });
+  });
+
+  it("keeps numeric entities past U+10FFFF as text instead of throwing", () => {
+    expect(parseNotionPage("<content>a &#x110000; b &#99999999; c &#x1F600;</content>")).toEqual({
+      content: "a &#x110000; b &#99999999; c \u{1F600}",
+      truncated: false,
+    });
+    expect(parseNotionComments('<comment id="c-9">x &#9999999999999999999999; y</comment>')).toEqual([
+      { id: "c-9", plain_text: "x &#9999999999999999999999; y" },
+    ]);
+  });
+
+  it("scans crafted unclosed tags and attribute runs in linear time", () => {
+    const crafted = [
+      "<comment>".repeat(40_000),
+      "<discussion>".repeat(40_000),
+      `<comment ${"a".repeat(200_000)}>x</comment>`,
+      `<comment>${"<".repeat(200_000)}</comment>`,
+    ];
+    const started = performance.now();
+    for (const text of crafted) parseNotionComments(text);
+    parseNotionPage("<page ".repeat(40_000));
+    parseNotionPage("<properties>".repeat(40_000));
+    // The previous lazy patterns took tens of seconds on these; a linear scan takes milliseconds.
+    expect(performance.now() - started).toBeLessThan(1_000);
   });
 
   it("takes an unclosed content block to the end and a bare answer whole", () => {
@@ -153,24 +191,47 @@ describe("Notion MCP response readers", () => {
     expect(parseNotionComments(null)).toEqual([]);
   });
 
-  it("reads the recorded tool-access report in its list and keyed shapes", () => {
-    const recorded = {
-      current_tool_access: [
-        { tool: "notion-search", status: "restricted", restricted_parameters: ["filters.edited_by_user_ids"] },
-        { tool: "notion-fetch", status: "full", restricted_parameters: [] },
-        { status: "nameless" },
-      ],
+  it("reads the documented tool-access map, keeping unrestricted tools and each restriction's reason", () => {
+    const documented = {
+      current_tool_access: {
+        search: {
+          status: "available",
+          restricted_parameters: {
+            "filters.edited_by_user_ids": "Requires a Business or Enterprise plan.",
+            "filters.teamspace_ids": { detail: "Multiple teamspaces require Business." },
+          },
+          upgrade_url: "https://www.notion.so/upgrade",
+        },
+        ai_search: {
+          status: "plan_required",
+          landing_page_url: "https://www.notion.so/ai",
+          landing_page_action: "start_trial",
+        },
+        fetch: { status: "available" },
+        broken: "text",
+      },
     };
-    expect(parseNotionToolAccess(recorded)).toEqual([
-      { tool: "notion-search", status: "restricted", restricted_parameters: ["filters.edited_by_user_ids"] },
-      { tool: "notion-fetch", status: "full", restricted_parameters: [] },
+    expect(parseNotionToolAccess(documented)).toEqual([
+      {
+        tool: "search",
+        status: "available",
+        restricted_parameters: [
+          { parameter: "filters.edited_by_user_ids", reason: "Requires a Business or Enterprise plan." },
+          { parameter: "filters.teamspace_ids", reason: '{"detail":"Multiple teamspaces require Business."}' },
+        ],
+        upgrade_url: "https://www.notion.so/upgrade",
+      },
+      {
+        tool: "ai_search",
+        status: "plan_required",
+        restricted_parameters: [],
+        landing_page_url: "https://www.notion.so/ai",
+        landing_page_action: "start_trial",
+      },
+      { tool: "fetch", status: "available", restricted_parameters: [] },
     ]);
-    expect(
-      parseNotionToolAccess({
-        "notion-search": { restricted_parameters: [{ name: "filters.edited_by_user_ids" }, 3] },
-        other: "text",
-      }),
-    ).toEqual([{ tool: "notion-search", restricted_parameters: ["filters.edited_by_user_ids"] }]);
+    expect(parseNotionToolAccess({ current_tool_access: {} })).toEqual([]);
+    expect(parseNotionToolAccess({ current_tool_access: [{ tool: "search" }] })).toEqual([]);
     expect(parseNotionToolAccess("nothing")).toEqual([]);
   });
 });

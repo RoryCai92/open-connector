@@ -25,7 +25,7 @@ export const provider: ProviderDefinition = {
       pkce: { method: "S256" },
       authorizationParams: { resource: notionMcpEndpoint },
       clientSetup: {
-        docsUrl: "https://developers.notion.com/guides/mcp/mcp-supported-tools",
+        docsUrl: "https://developers.notion.com/guides/mcp/build-mcp-client",
         steps: [
           "Copy the Callback URL shown below.",
           'POST {"client_name":"Open Connector","redirect_uris":["<Callback URL>"],"grant_types":["authorization_code","refresh_token"],"response_types":["code"],"token_endpoint_auth_method":"none"} as JSON to https://mcp.notion.com/register.',

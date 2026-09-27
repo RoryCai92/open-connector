@@ -15,6 +15,7 @@ const recordedAnswers: Record<string, string> = {
     has_more: false,
   }),
   "notion-search": JSON.stringify({
+    type: "workspace_search",
     results: [
       {
         id: "p-1",
@@ -48,11 +49,15 @@ const recordedAnswers: Record<string, string> = {
       },
     ],
   }),
+  // The map keyed by tool base name that Notion's supported-tools guide documents.
   "notion-get-tool-access": JSON.stringify({
-    current_tool_access: [
-      { tool: "notion-search", status: "restricted", restricted_parameters: ["filters.edited_by_user_ids"] },
-      { tool: "notion-fetch", status: "full", restricted_parameters: [] },
-    ],
+    current_tool_access: {
+      search: {
+        status: "available",
+        restricted_parameters: { "filters.edited_by_user_ids": "Requires a Business or Enterprise plan." },
+      },
+      fetch: { status: "available" },
+    },
   }),
 };
 
@@ -146,6 +151,7 @@ describe("notion_mcp executors", () => {
       expect(result).toEqual({
         ok: true,
         output: {
+          type: "workspace_search",
           results: [
             {
               id: "p-1",
@@ -218,7 +224,7 @@ describe("notion_mcp executors", () => {
     }
   });
 
-  it("flattens a page's discussions through notion-get-comments with include_all_blocks on by default", async () => {
+  it("flattens a page's discussions through notion-get-comments with block-level and resolved threads on by default", async () => {
     const host = createSyntheticHost(allTools);
     try {
       expect(await executors["notion_mcp.list_comments"]!({ page_id: "p-1" }, executionContext())).toEqual({
@@ -236,10 +242,13 @@ describe("notion_mcp executors", () => {
           raw: recordedAnswers["notion-get-comments"],
         },
       });
-      await executors["notion_mcp.list_comments"]!({ page_id: "p-2", include_all_blocks: false }, executionContext());
+      await executors["notion_mcp.list_comments"]!(
+        { page_id: "p-2", include_all_blocks: false, include_resolved: false },
+        executionContext(),
+      );
       expect(host.calls).toEqual([
-        { name: "notion-get-comments", args: { page_id: "p-1", include_all_blocks: true } },
-        { name: "notion-get-comments", args: { page_id: "p-2", include_all_blocks: false } },
+        { name: "notion-get-comments", args: { page_id: "p-1", include_all_blocks: true, include_resolved: true } },
+        { name: "notion-get-comments", args: { page_id: "p-2", include_all_blocks: false, include_resolved: false } },
       ]);
     } finally {
       await host.close();
@@ -253,8 +262,14 @@ describe("notion_mcp executors", () => {
         ok: true,
         output: {
           tools: [
-            { tool: "notion-search", status: "restricted", restricted_parameters: ["filters.edited_by_user_ids"] },
-            { tool: "notion-fetch", status: "full", restricted_parameters: [] },
+            {
+              tool: "search",
+              status: "available",
+              restricted_parameters: [
+                { parameter: "filters.edited_by_user_ids", reason: "Requires a Business or Enterprise plan." },
+              ],
+            },
+            { tool: "fetch", status: "available", restricted_parameters: [] },
           ],
           raw: recordedAnswers["notion-get-tool-access"],
         },
@@ -283,7 +298,7 @@ describe("notion_mcp executors", () => {
     try {
       expect(await executors["notion_mcp.search"]!({ query: "x" }, executionContext())).toEqual({
         ok: true,
-        output: { results: [], notices: [], raw: "Sorry, nothing matched." },
+        output: { type: undefined, results: [], notices: [], raw: "Sorry, nothing matched." },
       });
       expect(await executors["notion_mcp.get_self"]!({}, executionContext())).toEqual({
         ok: true,
@@ -309,6 +324,40 @@ describe("notion_mcp executors", () => {
       expect(await executors["notion_mcp.fetch_page"]!({ id: "missing" }, executionContext())).toMatchObject({
         ok: false,
         error: { code: "provider_error", message: "Notion MCP tool notion-fetch failed." },
+      });
+    } finally {
+      await host.close();
+    }
+  });
+
+  it("reports a rate limit Notion returns as a tool error as rate limited", async () => {
+    const host = createSyntheticHost([], async (request) => {
+      if (request.method !== "POST") return undefined;
+      const payload = (await request.json()) as { id?: number; method?: string };
+      if (payload.method !== "tools/call") return undefined;
+      return Response.json({
+        jsonrpc: "2.0",
+        id: payload.id,
+        result: {
+          isError: true,
+          content: [{ type: "text", text: "Rate limited" }],
+          structuredContent: {
+            error: {
+              code: "rate_limited",
+              retry_after_seconds: 12,
+              rate_limit_reason: "public_api_endpoint_rate_limit",
+            },
+          },
+        },
+      });
+    });
+    try {
+      expect(await executors["notion_mcp.search"]!({ query: "x" }, executionContext())).toMatchObject({
+        ok: false,
+        error: {
+          code: "rate_limited",
+          message: "Notion MCP tool notion-search was rate limited; retry after 12 seconds.",
+        },
       });
     } finally {
       await host.close();

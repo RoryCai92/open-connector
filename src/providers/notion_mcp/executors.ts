@@ -5,8 +5,10 @@ import type { Client } from "@modelcontextprotocol/client";
 import { ProtocolError, SdkHttpError, UnauthorizedError } from "@modelcontextprotocol/client";
 import {
   compactObject,
+  looseArray,
   optionalBoolean,
   optionalInteger,
+  optionalNumber,
   optionalRawString,
   optionalRecord,
   optionalString,
@@ -73,6 +75,7 @@ const toolsByAction: ProviderActionSources<typeof service, NotionMcpActionSource
     arguments: (input) => ({
       page_id: requiredInputString(input.page_id, "page_id"),
       include_all_blocks: optionalBoolean(input.include_all_blocks) ?? true,
+      include_resolved: optionalBoolean(input.include_resolved) ?? true,
     }),
     parse: (value) => ({ comments: parseNotionComments(value) }),
   },
@@ -180,8 +183,8 @@ async function callNotionTool(
 /** The text blocks joined are the raw answer; structured content, when the server sends it, is the value. */
 function readNotionToolResult(name: string, result: unknown): NotionMcpToolResult {
   const record = requiredResponseRecord(result, "Notion MCP result");
-  if (record.isError === true) throw new ProviderRequestError(502, `Notion MCP tool ${name} failed.`, record);
-  const texts = (Array.isArray(record.content) ? record.content : []).flatMap((block) => {
+  if (record.isError === true) throw notionToolError(name, record);
+  const texts = looseArray(record.content).flatMap((block) => {
     const item = optionalRecord(block);
     return item?.type === "text" ? [requiredRawString(item.text, "Notion MCP text", providerResponseError)] : [];
   });
@@ -189,6 +192,20 @@ function readNotionToolResult(name: string, result: unknown): NotionMcpToolResul
   if (texts.length === 0 && structured === undefined) throw providerResponseError("Notion MCP returned no content.");
   const raw = texts.length > 0 ? texts.join("\n") : JSON.stringify(structured);
   return { raw, value: structured ?? decodeNotionToolText(raw) };
+}
+
+/**
+ * A tool error. Notion returns a rate limit it does not wait out as a tool error whose `structuredContent.error`
+ * carries `code: "rate_limited"` and, when known, `retry_after_seconds`; that one is a 429, the rest a 502.
+ */
+function notionToolError(name: string, record: Record<string, unknown>): ProviderRequestError {
+  const error = optionalRecord(optionalRecord(record.structuredContent)?.error);
+  if (error?.code === "rate_limited") {
+    const retryAfter = optionalNumber(error.retry_after_seconds);
+    const wait = retryAfter === undefined ? "" : `; retry after ${retryAfter} seconds`;
+    return new ProviderRequestError(429, `Notion MCP tool ${name} was rate limited${wait}.`, record);
+  }
+  return new ProviderRequestError(502, `Notion MCP tool ${name} failed.`, record);
 }
 
 function withNotionMcpClient<T>(
