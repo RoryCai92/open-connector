@@ -152,14 +152,6 @@ OOMOL_CONNECT_ORIGIN="https://your-tunnel.example" npm run dev
 
 Then use the new `expectedRedirectUri` returned by `/api/oauth/configs`.
 
-A provider whose OAuth app is registered with a different redirect URI (for example a native app's
-custom scheme such as `myapp://oauth/callback`) can carry it per provider on the client config:
-`{"clientId":"...","clientSecret":"...","redirectUri":"myapp://oauth/callback"}`. It must be an
-absolute URL; any scheme is accepted. The authorization request and the code exchange both send that
-value and `expectedRedirectUri` reports it. The runtime's `/oauth/callback` route is unchanged: the
-app that owns the scheme forwards the callback query (`code`, `state`, or `error`) to it. Other
-providers keep the runtime callback.
-
 Store the local client configuration:
 
 ```bash
@@ -181,6 +173,24 @@ Every requested scope must come from the provider's declared `auth[].scopes`. Th
 unknown scopes instead of silently expanding authorization. Omit `requestedScopes` to keep the
 provider defaults; when present, the array must contain at least one scope. Config summaries expose
 both `requestedScopes` and the resulting `effectiveScopes`.
+
+A provider whose OAuth app is registered with a different redirect URI, for example a native app's
+custom scheme, can save it as `redirectUri` with the client configuration:
+
+```bash
+curl -s -X PUT http://localhost:3000/api/oauth/configs/example \
+  -H 'content-type: application/json' \
+  -d '{"clientId":"...","clientSecret":"...","redirectUri":"myapp://oauth/callback"}'
+```
+
+The value must be an absolute URI without user info or a fragment, and it is sent exactly as saved.
+Custom schemes are accepted; `javascript:`, `vbscript:`, `data:`, `file:`, `blob:`, and `about:` are
+rejected. The authorization request and the code exchange both send it, and `expectedRedirectUri`
+reports it so you can register that value with the provider. Omit it or send an empty string to use
+the runtime callback again; each `PUT` replaces the whole configuration, so include `redirectUri`
+whenever you save the configuration. The runtime's `/oauth/callback` route is unchanged: the app that
+owns the redirect forwards the provider's callback query (`code` and `state`, or `error`) to it.
+Other providers keep the runtime callback.
 
 Some providers declare additional OAuth client fields in `auth[].clientConfigFields`; send those as
 `extra`.

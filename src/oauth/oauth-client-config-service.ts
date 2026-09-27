@@ -358,18 +358,28 @@ function normalizeRequestedScopes(
 }
 
 /**
+ * Schemes that can never be a redirection endpoint: they run script, embed a
+ * document, or read local resources in the browser that follows the redirect.
+ */
+const forbiddenRedirectUriSchemes = new Set(["javascript:", "vbscript:", "data:", "file:", "blob:", "about:"]);
+
+/**
  * Validate a redirect URI override. It must be an absolute URL; the scheme is
- * free (a native app registers a custom scheme with the provider) but user info
- * and a fragment are not part of any registered redirect (RFC 6749 §3.1.2). The
+ * free (a native app registers a custom scheme with the provider, RFC 8252 §7.1)
+ * except for schemes that can never be a redirection endpoint, and user info and
+ * a fragment are not part of any registered redirect (RFC 6749 §3.1.2). The
  * trimmed input is kept verbatim: the provider compares it byte for byte with
- * the value registered on the OAuth app, so it is never re-serialized.
+ * the value registered on the OAuth app, so it is never re-serialized. That is
+ * why the checks read the raw string: the URL parser drops an empty `#` or `@`
+ * and strips tabs and newlines, so the parsed value can differ from the stored
+ * one.
  */
 function normalizeRedirectUri(value: string | undefined): string | undefined {
   if (value === undefined) {
     return undefined;
   }
   if (typeof value !== "string") {
-    throw new OAuthClientConfigError("invalid_input", "redirectUri must be an absolute URL.");
+    throw new OAuthClientConfigError("invalid_input", "redirectUri must be a string.");
   }
   const trimmed = value.trim();
   if (!trimmed) {
@@ -381,8 +391,18 @@ function normalizeRedirectUri(value: string | undefined): string | undefined {
   } catch {
     throw new OAuthClientConfigError("invalid_input", "redirectUri must be an absolute URL.");
   }
-  if (!/^[a-z][a-z0-9+.-]*:$/i.test(url.protocol) || url.username || url.password || url.hash) {
+  // A URI never carries whitespace, control characters, or a backslash (RFC 3986 §2).
+  if (/[\s\p{Cc}\\]/u.test(trimmed)) {
     throw new OAuthClientConfigError("invalid_input", "redirectUri must be an absolute URL.");
+  }
+  if (forbiddenRedirectUriSchemes.has(url.protocol)) {
+    throw new OAuthClientConfigError("invalid_input", "redirectUri scheme is not allowed.");
+  }
+  // The parser lowercases the scheme but keeps its length, so the raw authority
+  // starts right after it; an opaque path (no host) may legitimately contain `@`.
+  const authority = url.host ? /^\/*([^/?]*)/.exec(trimmed.slice(url.protocol.length))?.[1] : undefined;
+  if (trimmed.includes("#") || authority?.includes("@")) {
+    throw new OAuthClientConfigError("invalid_input", "redirectUri must not contain user info or a fragment.");
   }
   return trimmed;
 }

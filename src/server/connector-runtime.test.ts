@@ -115,7 +115,6 @@ describe("headless runtime", () => {
     runtime = await createConnectorRuntime(await fixture());
     expect((await (await request("/v1/providers/github/setup")).json()).data.oauthClient).toMatchObject({
       expectedRedirectUri: `${publicOrigin}/oauth/callback`,
-      redirectUri: null,
     });
     const refused = await request(
       "/api/oauth/configs/github",
@@ -133,10 +132,11 @@ describe("headless runtime", () => {
     );
     expect(configured.status).toBe(200);
     const setup = (await (await request("/v1/providers/github/setup")).json()).data;
-    expect(setup.oauthClient).toMatchObject({
+    // The setup block reports only the effective redirect; the override itself stays on the admin config API.
+    expect(setup.oauthClient).toEqual({
       configured: true,
+      customClientAvailable: false,
       expectedRedirectUri: "app://oauth/callback",
-      redirectUri: "app://oauth/callback",
       missingFields: [],
     });
     expect(JSON.stringify(setup)).not.toMatch(/fixture-client|fixture-secret/);

@@ -245,12 +245,28 @@ describe("OAuthClientConfigService", () => {
     );
   });
 
+  const notAbsolute = "redirectUri must be an absolute URL.";
+  const userInfoOrFragment = "redirectUri must not contain user info or a fragment.";
+  const schemeNotAllowed = "redirectUri scheme is not allowed.";
   it.each([
-    ["a relative path", "oauth/callback"],
-    ["not a URL", "not a url"],
-    ["carrying user info", "app://user:secret@oauth/callback"],
-    ["carrying a fragment", "http://localhost:8797/oauth/callback#fragment"],
-  ])("rejects a redirect URI override that is %s", (_case, redirectUri) => {
+    ["a relative path", "oauth/callback", notAbsolute],
+    ["not a URL", "not a url", notAbsolute],
+    ["carrying an inner tab the URL parser would strip", "app://oauth/call\tback", notAbsolute],
+    ["carrying an inner space", "app://oauth/call back", notAbsolute],
+    ["carrying a backslash", "https:\\\\example.com\\callback", notAbsolute],
+    ["carrying user info", "app://user:secret@oauth/callback", userInfoOrFragment],
+    ["carrying empty user info", "https://@example.com/callback", userInfoOrFragment],
+    ["carrying user info without slashes", "https:user@example.com/callback", userInfoOrFragment],
+    ["carrying a fragment", "http://localhost:8797/oauth/callback#fragment", userInfoOrFragment],
+    ["carrying an empty fragment", "https://example.com/callback#", userInfoOrFragment],
+    ["a javascript URL", "javascript:alert(1)", schemeNotAllowed],
+    ["a mixed-case javascript URL", "JavaScript://oauth/%0aalert(1)", schemeNotAllowed],
+    ["a vbscript URL", "vbscript:msgbox(1)", schemeNotAllowed],
+    ["a data URL", "data:text/html,<script>alert(1)</script>", schemeNotAllowed],
+    ["a file URL", "file:///etc/passwd", schemeNotAllowed],
+    ["a blob URL", "blob:https://example.com/0f0e", schemeNotAllowed],
+    ["an about URL", "about:blank", schemeNotAllowed],
+  ])("rejects a redirect URI override that is %s", (_case, redirectUri, message) => {
     const service = new OAuthClientConfigService({
       catalog: createCatalogStore([oauthProvider("example")]),
       origin: "http://localhost:8797",
@@ -263,7 +279,26 @@ describe("OAuthClientConfigService", () => {
         clientSecret: "client-secret",
         redirectUri,
       }),
-    ).toThrow(expect.objectContaining({ code: "invalid_input", message: "redirectUri must be an absolute URL." }));
+    ).toThrow(expect.objectContaining({ code: "invalid_input", message }));
+  });
+
+  it.each([
+    ["a private-use scheme with an authority", "myapp://oauth/callback"],
+    ["a reverse-DNS private-use scheme (RFC 8252 §7.1)", "com.example.app:/oauth2redirect"],
+    ["a loopback http callback", "http://127.0.0.1:8080/oauth/callback"],
+    ["an https callback with a query", "https://app.example.com/oauth/callback?source=desktop&email=a@b.example"],
+    ["an opaque path carrying @", "myapp:callback@device"],
+  ])("keeps a redirect URI override that is %s verbatim", (_case, redirectUri) => {
+    const service = new OAuthClientConfigService({
+      catalog: createCatalogStore([oauthProvider("example")]),
+      origin: "http://localhost:8797",
+      store: new MemoryOAuthClientConfigStore(),
+    });
+
+    expect(
+      service.normalizeConfig("example", { clientId: "client-id", clientSecret: "client-secret", redirectUri })
+        .redirectUri,
+    ).toBe(redirectUri);
   });
 });
 

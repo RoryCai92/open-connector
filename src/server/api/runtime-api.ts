@@ -363,8 +363,6 @@ interface RuntimeOAuthClientSetup {
   customClientAvailable: boolean;
   /** Redirect URI to register with the provider: the configured override, else the runtime callback. */
   expectedRedirectUri: string;
-  /** Configured redirect URI override, or null when the runtime callback is used. */
-  redirectUri: string | null;
   missingFields: string[];
 }
 
@@ -380,7 +378,6 @@ export function serializeRuntimeProviderSetup(
           configured: oauth.configured,
           customClientAvailable: oauth.customClientAvailable,
           expectedRedirectUri: oauth.expectedRedirectUri,
-          redirectUri: oauth.redirectUri,
           missingFields: oauth.missingFields,
         }
       : undefined,

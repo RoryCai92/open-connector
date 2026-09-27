@@ -94,7 +94,7 @@ const oauthClientConfigRequestSchema = jsonSchema.object(
     }),
     redirectUri: jsonSchema.string({
       description:
-        "Absolute redirect URI registered with the provider instead of the runtime callback; any scheme. Omit to use the runtime callback.",
+        "Absolute redirect URI registered with the provider instead of the runtime callback, such as a native app's custom scheme. Must not carry user info or a fragment; javascript, vbscript, data, file, blob, and about schemes are rejected. Omit or send an empty string to use the runtime callback.",
     }),
     extra: {
       type: "object",
@@ -1323,6 +1323,10 @@ function createOAuthAuthorizationPath(): Record<string, unknown> {
                   minItems: 1,
                   description: "Optional non-empty provider-declared scope subset to request.",
                 }),
+                redirectUri: jsonSchema.string({
+                  description:
+                    "Optional redirect URI registered with the connection-scoped OAuth app instead of the runtime callback. Same rules as OAuthClientConfigRequest.redirectUri.",
+                }),
                 authorizationOptionIds: jsonSchema.array(jsonSchema.string(), {
                   description: "Optional provider authorization option ids selected for this connection.",
                 }),
@@ -1656,9 +1660,6 @@ function connectionManagementPaths(): Record<string, unknown> {
         customClientAvailable: jsonSchema.boolean("Whether connections may carry their own OAuth client."),
         expectedRedirectUri: jsonSchema.string(
           "Callback URL to register with the provider: the configured override, else the runtime callback.",
-        ),
-        redirectUri: jsonSchema.nullableString(
-          "Configured redirect URI override, or null when the runtime callback is used.",
         ),
         missingFields: jsonSchema.stringArray("Required client inputs absent from the stored configuration."),
       }),

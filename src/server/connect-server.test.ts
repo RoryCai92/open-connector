@@ -390,7 +390,9 @@ describe("ConnectServer", () => {
 
   it.each([
     ["not an absolute URL", "oauth/callback", "redirectUri must be an absolute URL."],
+    ["a javascript URL", "javascript:alert(1)", "redirectUri scheme is not allowed."],
     ["not a string", 42, "redirectUri must be a string."],
+    ["null", null, "redirectUri must be a string."],
   ])("rejects a redirect URI override that is %s through the public API", async (_case, redirectUri, message) => {
     const app = createTestServer([oauthProvider]).createApp();
     const response = await app.request("/api/oauth/configs/oauth_example", {
@@ -404,6 +406,57 @@ describe("ConnectServer", () => {
     await expect((await app.request("/api/oauth/configs")).json()).resolves.toMatchObject([
       { service: "oauth_example", configured: false, redirectUri: null },
     ]);
+  });
+
+  // A redirect URI on the authorization request belongs to a connection-scoped
+  // client; it must never redirect the stored client's authorization code.
+  it.each([
+    ["custom OAuth apps are disabled", {}, "oauth_custom_app_not_allowed"],
+    [
+      "custom OAuth apps are enabled",
+      { allowedCustomOAuth: ["oauth_example"], secretCodec: new AesGcmSecretCodec("test-encryption-key") },
+      "invalid_input",
+    ],
+  ])("does not pair an authorization redirect URI with the stored client when %s", async (_case, options, code) => {
+    const app = createTestServer([oauthProvider], options).createApp();
+    await app.request("/api/oauth/configs/oauth_example", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ clientId: "global-client-id", clientSecret: "global-client-secret" }),
+    });
+
+    const response = await app.request("/api/oauth/authorizations", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ service: "oauth_example", redirectUri: "https://elsewhere.example/callback" }),
+    });
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({ error: { code } });
+  });
+
+  it("carries a connection-scoped OAuth client's own redirect URI on its authorize URL", async () => {
+    const app = createTestServer([oauthProvider], {
+      allowedCustomOAuth: ["oauth_example"],
+      secretCodec: new AesGcmSecretCodec("test-encryption-key"),
+    }).createApp();
+
+    const response = await app.request("/api/oauth/authorizations", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        service: "oauth_example",
+        clientId: "connection-client-id",
+        clientSecret: "connection-client-secret",
+        redirectUri: "app://oauth/callback",
+      }),
+    });
+    const body = (await response.json()) as { authorizationUrl: string };
+
+    expect(response.status).toBe(200);
+    const authorizationUrl = new URL(body.authorizationUrl);
+    expect(authorizationUrl.searchParams.get("client_id")).toBe("connection-client-id");
+    expect(authorizationUrl.searchParams.get("redirect_uri")).toBe("app://oauth/callback");
   });
 
   it("lists providers without action schemas and serves full schemas per action", async () => {
