@@ -149,7 +149,7 @@ function oauthCredential(): Extract<ResolvedCredential, { authType: "oauth2" }> 
     accessToken,
     tokenType: "Bearer",
     profile: { accountId: "pending", displayName: "pending", grantedScopes: [] },
-    metadata: { scope: "read write" },
+    metadata: { scope: "read" },
   };
 }
 
@@ -168,7 +168,7 @@ describe("linear_mcp definition", () => {
     if (oauth.type !== "oauth2") throw new Error("expected oauth2");
     expect(oauth.authorizationUrl).toBe("https://mcp.linear.app/authorize");
     expect(oauth.tokenUrl).toBe("https://mcp.linear.app/token");
-    expect(oauth.scopes).toEqual(["read", "write"]);
+    expect(oauth.scopes).toEqual(["read"]);
     expect(oauth.scopeSeparator).toBeUndefined();
     expect(oauth.tokenEndpointAuthMethod).toBe("none");
     expect(oauth.pkce).toEqual({ method: "S256" });
@@ -190,7 +190,7 @@ describe("linear_mcp definition", () => {
       grant_types: ["authorization_code", "refresh_token"],
       response_types: ["code"],
       token_endpoint_auth_method: "none",
-      scope: "read write",
+      scope: "read",
     });
   });
 
@@ -435,7 +435,7 @@ describe("linear_mcp credential validator", () => {
     const result = await credentialValidators.oauth2!(oauthCredential(), { fetcher: host.fetcher });
     expect(result).toEqual({
       profile: { accountId: selfBody.id, displayName: "sam" },
-      grantedScopes: ["read", "write"],
+      grantedScopes: ["read"],
       metadata: { mcpEndpoint: endpoint, discoveredToolCount: 5 },
     });
     expect(host.calls.filter((call) => call.method === "tools/list").map((call) => call.params?.cursor)).toEqual([

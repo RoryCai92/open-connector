@@ -23,7 +23,7 @@ export const provider: ProviderDefinition = {
       type: "oauth2",
       authorizationUrl: `${linearMcpIssuer}/authorize`,
       tokenUrl: `${linearMcpIssuer}/token`,
-      scopes: ["read", "write"],
+      scopes: ["read"],
       tokenEndpointAuthMethod: "none",
       pkce: { method: "S256" },
       authorizationParams: { resource: linearMcpEndpoint },
@@ -31,7 +31,7 @@ export const provider: ProviderDefinition = {
         docsUrl: "https://linear.app/docs/mcp",
         steps: [
           "Copy the Callback URL shown below.",
-          'POST {"client_name":"Open Connector","redirect_uris":["<Callback URL>"],"grant_types":["authorization_code","refresh_token"],"response_types":["code"],"token_endpoint_auth_method":"none","scope":"read write"} as JSON to https://mcp.linear.app/register.',
+          'POST {"client_name":"Open Connector","redirect_uris":["<Callback URL>"],"grant_types":["authorization_code","refresh_token"],"response_types":["code"],"token_endpoint_auth_method":"none","scope":"read"} as JSON to https://mcp.linear.app/register.',
           "Copy the returned client_id into the Client ID field below and leave Client Secret empty.",
         ],
       },
