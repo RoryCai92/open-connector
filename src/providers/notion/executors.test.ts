@@ -522,6 +522,7 @@ describe("notion comments", () => {
       }),
     ).toBe(true);
     expect(valid({ discussion_id: DISCUSSION, rich_text: richText, display_name: { type: "robot" } })).toBe(false);
+    expect(valid({ discussion_id: DISCUSSION, rich_text: richText, display_name: { type: "custom" } })).toBe(false);
   });
 
   it("declares the comment capabilities and accepts the partial comment Notion returns without read access", () => {

@@ -209,17 +209,28 @@ const commentParent = s.oneOf(
   { description: "The page or block that starts a new discussion." },
 );
 
-const commentDisplayName = s.object(
-  {
-    type: s.stringEnum(["integration", "user", "custom"], {
-      description: "Show the integration's name, the authorizing user's name, or the custom name.",
-    }),
-    custom: s.object(
-      { name: s.string({ minLength: 1, description: "The author name to show." }) },
-      { required: ["name"], description: "Required when type is custom." },
+const commentDisplayName = s.oneOf(
+  [
+    s.object(
+      { type: s.literal("integration", { description: "Show the integration's name." }) },
+      { required: ["type"], description: "Integration name." },
     ),
-  },
-  { required: ["type"], description: "The author name Notion shows on the comment." },
+    s.object(
+      { type: s.literal("user", { description: "Show the authorizing user's name." }) },
+      { required: ["type"], description: "User name." },
+    ),
+    s.object(
+      {
+        type: s.literal("custom", { description: "Show the name given in custom." }),
+        custom: s.object(
+          { name: s.string({ minLength: 1, description: "The author name to show." }) },
+          { required: ["name"], description: "The custom author name." },
+        ),
+      },
+      { required: ["type", "custom"], description: "Custom name." },
+    ),
+  ],
+  { description: "The author name Notion shows on the comment." },
 );
 
 const commentAttachment = s.object(
