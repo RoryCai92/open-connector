@@ -13,8 +13,8 @@ export const outlookProviderScopes = {
 // Reading the mailbox — the profile, the root folders, the message list and one
 // message — needs Mail.Read, the read-only permission Microsoft Graph documents
 // for GET /me/mailFolders and GET /me/messages (Mail.ReadWrite is its write
-// superset; Mail.ReadBasic omits the body). A host that requests the read-only
-// subset of the declared scopes therefore satisfies every read action.
+// superset; Mail.ReadBasic omits the body). A host that requests Mail.Read
+// instead of Mail.ReadWrite can therefore run these mailbox read actions.
 export const outlookReadScopes: string[] = [outlookProviderScopes.userRead, outlookProviderScopes.mailRead];
 export const outlookWriteScopes: string[] = [outlookProviderScopes.mailReadWrite];
 export const outlookSendScopes: string[] = [outlookProviderScopes.mailSend];

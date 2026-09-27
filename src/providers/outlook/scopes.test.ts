@@ -12,8 +12,8 @@ import { outlookOAuthScopes } from "./scopes.ts";
 // GET /me/mailFolders and GET /me/messages (Mail.Read) and for
 // GET /me/calendarView (Calendars.Read). Nothing in it can write or send.
 const readOnlyGrant = ["offline_access", "User.Read", "Mail.Read", "Calendars.Read"];
-// The actions a mail reader runs: the mailbox identity, the root folders, the messages.
-const readerActions = ["get_profile", "list_mail_folders", "list_messages"];
+// The actions a mail reader runs: the mailbox identity, the root folders, the messages, one message.
+const readerActions = ["get_profile", "list_mail_folders", "list_messages", "get_message"];
 
 describe("Outlook OAuth scopes", () => {
   it("declares the read-only pair beside the write grant", () => {
