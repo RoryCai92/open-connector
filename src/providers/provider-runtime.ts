@@ -1076,6 +1076,16 @@ export async function readProviderErrorTextBody(response: Response, fieldName: s
   }
 }
 
+// The three HTTP-date forms of RFC 9110 section 5.6.7. Date.parse alone is too
+// lenient for a header: V8 reads "wait 5" as 1 May 2001, and reads the zone-less
+// asctime form as local time although every HTTP-date is UTC.
+const imfFixdatePattern =
+  /^(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun), \d{2} (?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) \d{4} \d{2}:\d{2}:\d{2} GMT$/;
+const rfc850DatePattern =
+  /^(?:Mon|Tues|Wednes|Thurs|Fri|Satur|Sun)day, \d{2}-(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)-\d{2} \d{2}:\d{2}:\d{2} GMT$/;
+const asctimeDatePattern =
+  /^(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun) (?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) [ \d]\d \d{2}:\d{2}:\d{2} \d{4}$/;
+
 /**
  * Read a `Retry-After` header as whole seconds from now: an integer delay
  * verbatim, an HTTP-date as the seconds until that instant (never negative).
@@ -1091,9 +1101,12 @@ export function readRetryAfterSeconds(headers: Headers, now: number = Date.now()
     const seconds = Number(value);
     return Number.isSafeInteger(seconds) ? seconds : undefined;
   }
-  // An HTTP-date always names its weekday and month; without a letter the
-  // value is a malformed number, which Date.parse would still read as a year.
-  const retryAt = /[a-z]/i.test(value) ? Date.parse(value) : Number.NaN;
+  const retryAt =
+    imfFixdatePattern.test(value) || rfc850DatePattern.test(value)
+      ? Date.parse(value)
+      : asctimeDatePattern.test(value)
+        ? Date.parse(`${value} GMT`)
+        : Number.NaN;
   return Number.isFinite(retryAt) ? Math.max(0, Math.ceil((retryAt - now) / 1000)) : undefined;
 }
 

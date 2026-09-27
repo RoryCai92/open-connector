@@ -12,6 +12,7 @@ import {
   serializeRuntimeFailure,
   unknownActionFailure,
   writeRuntimeActionHttpResult,
+  writeRuntimeFailure,
 } from "./runtime-api.ts";
 
 function actionStatusFor(code: string): number {
@@ -294,6 +295,22 @@ describe("Retry-After on the action route", () => {
     });
   });
 
+  it("answers a proxy 429 with the provider's Retry-After", async () => {
+    const app = new Hono().post("/", (context) =>
+      writeRuntimeFailure(context, {
+        status: 429,
+        errorCode: "rate_limited",
+        message: "Rate limited.",
+        data: { status: 429, details: { retryAfterSeconds: 73 } },
+        meta: { service: "notion" },
+      }),
+    );
+    const response = await app.request("/", { method: "POST" });
+
+    expect(response.status).toBe(429);
+    expect(response.headers.get("retry-after")).toBe("73");
+  });
+
   it("re-emits the header on an idempotent replay from the persisted body", async () => {
     const replayed = parseRuntimeActionHttpResult(JSON.parse(JSON.stringify(rateLimited)));
     const response = await write(replayed);
@@ -310,6 +327,10 @@ describe("Retry-After on the action route", () => {
       { status: 429, data: { status: 429, details: { retryAfterSeconds: "73" } } },
     ],
     ["a 429 whose hint is negative", { status: 429, data: { status: 429, details: { retryAfterSeconds: -1 } } }],
+    [
+      "a 429 whose hint is too large to print as digits",
+      { status: 429, data: { status: 429, details: { retryAfterSeconds: 1e21 } } },
+    ],
     ["a 429 with null data", { status: 429, data: null }],
     ["a non-429 carrying the hint", { status: 500, data: { status: 503, details: { retryAfterSeconds: 73 } } }],
   ] as const)("sets no header for %s", async (_label, input) => {

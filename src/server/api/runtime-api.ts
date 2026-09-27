@@ -246,7 +246,8 @@ export function parseRuntimeActionHttpResult(value: unknown): RuntimeActionHttpR
 }
 
 /**
- * Write a newly serialized or replayed action response. A 429 whose provider
+ * Write a newly serialized or replayed action response; runtime failures,
+ * including proxy failures, go through here as well. A 429 whose provider
  * details carry `retryAfterSeconds` also answers with the `Retry-After`
  * header, so HTTP callers pace on the provider's own hint; the body keeps it,
  * which is what an idempotent replay re-emits the header from.
@@ -264,7 +265,8 @@ function readRuntimeRetryAfterSeconds(result: RuntimeActionHttpResult): number |
     return undefined;
   }
   const seconds = optionalInteger(optionalRecord(optionalRecord(result.body.data)?.details)?.retryAfterSeconds);
-  return seconds !== undefined && seconds >= 0 ? seconds : undefined;
+  // A safe integer is what keeps String() in plain delay-seconds digits: 1e21 would print as "1e+21".
+  return seconds !== undefined && Number.isSafeInteger(seconds) && seconds >= 0 ? seconds : undefined;
 }
 
 export function mapConnectionErrorStatus(error: ConnectionError): 400 | 404 | 409 {

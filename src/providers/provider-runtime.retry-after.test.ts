@@ -14,7 +14,24 @@ describe("readRetryAfterSeconds", () => {
     expect(readRetryAfterSeconds(new Headers({ "Retry-After": "Sat, 26 Sep 2026 09:00:00 GMT" }), now)).toBe(0);
   });
 
-  it.each(["", "soon", "-5", "1.5", "9007199254740993"])("ignores an unusable header %j", (value) => {
+  it.each(["Saturday, 26-Sep-26 10:01:30 GMT", "Sat Sep 26 10:01:30 2026"])(
+    "reads the obsolete HTTP-date form %j as UTC",
+    (value) => {
+      expect(readRetryAfterSeconds(new Headers({ "Retry-After": value }), now)).toBe(90);
+    },
+  );
+
+  it.each([
+    "",
+    "soon",
+    "-5",
+    "1.5",
+    "9007199254740993",
+    "wait 5",
+    "2026-09-26T10:01:30Z",
+    "Sat, 26 Sep 2026 10:01:30 +0800",
+    "Sat, 26 Sep 2026",
+  ])("ignores an unusable header %j", (value) => {
     expect(readRetryAfterSeconds(new Headers({ "Retry-After": value }), now)).toBeUndefined();
   });
 
