@@ -159,11 +159,10 @@ async function listEvents(
       preferTimeZone(input),
     ),
   );
-  // Rows stay raw so a delta round's `@removed` markers pass through.
-  return {
-    ...listOutput(payload, "events"),
-    deltaLink: optionalString(payload["@odata.deltaLink"]) ?? null,
-  };
+  // Rows stay raw so a delta round's `@removed` markers pass through. Only the
+  // calendar view has delta rounds, so only it reports a deltaLink.
+  const output = listOutput(payload, "events");
+  return calendarView ? { ...output, deltaLink: optionalString(payload["@odata.deltaLink"]) ?? null } : output;
 }
 
 async function getEvent(input: Record<string, unknown>, context: OAuthProviderContext): Promise<unknown> {

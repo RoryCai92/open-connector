@@ -170,7 +170,7 @@ describe("Outlook Calendar execution", () => {
     }
   });
 
-  it("keeps the plain event listing shape, with deltaLink null", async () => {
+  it("keeps the plain event listing shape without a deltaLink", async () => {
     let request: Request | undefined;
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
       request = input instanceof Request ? input : new Request(input, init);
@@ -179,7 +179,7 @@ describe("Outlook Calendar execution", () => {
 
     const result = await execute("list_events", { top: 1 });
 
-    expect(result).toEqual({ ok: true, output: { events: [{ id: "event-1" }], nextLink: null, deltaLink: null } });
+    expect(result).toEqual({ ok: true, output: { events: [{ id: "event-1" }], nextLink: null } });
     expect(request?.url).toBe("https://graph.microsoft.com/v1.0/me/events?%24top=1");
   });
 

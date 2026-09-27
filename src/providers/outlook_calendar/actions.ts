@@ -166,15 +166,21 @@ const listQueryFields = {
   nextLink,
   preferTimeZone: timeZone,
 };
+const eventList = s.array(event, { description: "Events returned by Microsoft Graph." });
+const eventsNextLink = s.nullableString("Next-page URL, or null when no page remains.");
 const listEventsOutput = s.object(
+  { events: eventList, nextLink: eventsNextLink },
+  { required: ["events", "nextLink"], description: "Paginated Outlook event response." },
+);
+const listCalendarViewOutput = s.object(
   {
-    events: s.array(event, { description: "Events returned by Microsoft Graph." }),
-    nextLink: s.nullableString("Next-page URL, or null when no page remains."),
+    events: eventList,
+    nextLink: eventsNextLink,
     deltaLink: s.nullableString(
       "Delta URL for the next round of changes once a calendar view delta round is complete, or null (always null for plain listings).",
     ),
   },
-  { required: ["events", "nextLink", "deltaLink"], description: "Paginated Outlook event response." },
+  { required: ["events", "nextLink", "deltaLink"], description: "Paginated Outlook calendar view response." },
 );
 const scheduleInformation = s.looseObject(
   {
@@ -266,7 +272,7 @@ const actions: OutlookCalendarActionSource[] = [
     "read",
     "List event occurrences and exceptions within a date-time range.",
     outlookCalendarScopes,
-    listEventsOutput,
+    listCalendarViewOutput,
     input(
       {
         calendarId,
