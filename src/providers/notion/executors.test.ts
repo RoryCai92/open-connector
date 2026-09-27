@@ -4,6 +4,7 @@ import { Validator } from "@cfworker/json-schema";
 import { describe, expect, it, vi } from "vitest";
 import { validateActionInput } from "../../core/validation.ts";
 import { notionActions } from "./actions.ts";
+import { provider } from "./definition.ts";
 import { credentialValidators, executors } from "./executors.ts";
 
 type OAuthCredential = Extract<ResolvedCredential, { authType: "oauth2" }>;
@@ -530,6 +531,12 @@ describe("notion comments", () => {
     const create = notionActions.find((candidate) => candidate.name === "create_comment")!;
     expect(list.requiredScopes).toEqual(["read_comments"]);
     expect(create.requiredScopes).toEqual(["insert_comments"]);
+    // The OAuth scope list doubles as the capability checklist the setup UI shows, so it must cover every action.
+    const oauth = provider.auth.find((auth) => auth.type === "oauth2");
+    const declared = new Set(oauth?.type === "oauth2" ? oauth.scopes : []);
+    expect(
+      notionActions.flatMap((candidate) => candidate.requiredScopes.filter((scope) => !declared.has(scope))),
+    ).toEqual([]);
     expect(new Validator(create.outputSchema).validate({ object: "comment", id: "c-11" }).valid).toBe(true);
   });
 
