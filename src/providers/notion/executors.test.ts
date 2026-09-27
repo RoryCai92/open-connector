@@ -1,6 +1,9 @@
 import type { ExecutionContext, ResolvedCredential } from "../../core/types.ts";
 
+import { Validator } from "@cfworker/json-schema";
 import { describe, expect, it, vi } from "vitest";
+import { validateActionInput } from "../../core/validation.ts";
+import { notionActions } from "./actions.ts";
 import { credentialValidators, executors } from "./executors.ts";
 
 type OAuthCredential = Extract<ResolvedCredential, { authType: "oauth2" }>;
@@ -478,9 +481,55 @@ describe("notion comments", () => {
   it("refuses a comment that names neither or both of parent and discussion_id before any request", async () => {
     for (const input of [{ rich_text: [] }, { parent: { page_id: PAGE }, discussion_id: DISCUSSION, rich_text: [] }]) {
       const { result, calls } = await run("notion.create_comment", input, () => jsonResponse({}));
-      expect(result).toMatchObject({ ok: false, error: { message: expect.stringContaining("discussion_id") } });
+      expect(result).toMatchObject({
+        ok: false,
+        error: { details: { status: 400 }, message: expect.stringContaining("discussion_id") },
+      });
       expect(calls).toHaveLength(0);
     }
+  });
+
+  it("publishes an input schema that takes exactly one target and Notion's attachment and display name shapes", () => {
+    const action = notionActions.find((candidate) => candidate.name === "create_comment")!;
+    const richText = [{ type: "text", text: { content: "Hi" } }];
+    const valid = (input: Record<string, unknown>) => validateActionInput(action, input).valid;
+
+    expect(valid({ parent: { page_id: PAGE }, rich_text: richText })).toBe(true);
+    expect(valid({ parent: { type: "block_id", block_id: PAGE }, rich_text: richText })).toBe(true);
+    expect(valid({ discussion_id: DISCUSSION, rich_text: richText })).toBe(true);
+    expect(valid({ rich_text: richText })).toBe(false);
+    expect(valid({ parent: { page_id: PAGE }, discussion_id: DISCUSSION, rich_text: richText })).toBe(false);
+    expect(valid({ parent: { page_id: PAGE, block_id: PAGE }, rich_text: richText })).toBe(false);
+    expect(valid({ parent: { database_id: PAGE }, rich_text: richText })).toBe(false);
+
+    const attachment = { file_upload_id: "fu-1", type: "file_upload" };
+    expect(
+      valid({ discussion_id: DISCUSSION, rich_text: richText, attachments: [attachment, attachment, attachment] }),
+    ).toBe(true);
+    expect(
+      valid({
+        discussion_id: DISCUSSION,
+        rich_text: richText,
+        attachments: [attachment, attachment, attachment, attachment],
+      }),
+    ).toBe(false);
+    expect(valid({ discussion_id: DISCUSSION, rich_text: richText, display_name: { type: "integration" } })).toBe(true);
+    expect(
+      valid({
+        discussion_id: DISCUSSION,
+        rich_text: richText,
+        display_name: { type: "custom", custom: { name: "Bot" } },
+      }),
+    ).toBe(true);
+    expect(valid({ discussion_id: DISCUSSION, rich_text: richText, display_name: { type: "robot" } })).toBe(false);
+  });
+
+  it("declares the comment capabilities and accepts the partial comment Notion returns without read access", () => {
+    const list = notionActions.find((candidate) => candidate.name === "list_comments")!;
+    const create = notionActions.find((candidate) => candidate.name === "create_comment")!;
+    expect(list.requiredScopes).toEqual(["read_comments"]);
+    expect(create.requiredScopes).toEqual(["insert_comments"]);
+    expect(new Validator(create.outputSchema).validate({ object: "comment", id: "c-11" }).valid).toBe(true);
   });
 
   it("passes Notion's refusal through with its status and message", async () => {

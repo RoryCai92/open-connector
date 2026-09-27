@@ -13,6 +13,7 @@ import {
   createProviderProxyUrl,
   defineProviderExecutors,
   normalizeProviderProxyHeaders,
+  providerInputError,
   ProviderRequestError,
   providerUserAgent,
   readProviderProxyErrorMessage,
@@ -853,7 +854,7 @@ async function notionCreateComment(input: Record<string, unknown>, accessToken: 
   const parent = asObject(input.parent);
   const discussionId = asNonEmptyString(input.discussion_id);
   if (!parent === !discussionId) {
-    throw new ProviderRequestError(400, "exactly one of parent or discussion_id is required");
+    throw providerInputError("exactly one of parent or discussion_id is required");
   }
 
   const payload = await notionRequest<NotionObject>(

@@ -2,7 +2,7 @@ import type { ActionDefinition, JsonSchema } from "../../core/types.ts";
 
 import { s } from "../../core/json-schema.ts";
 import { defineProviderAction } from "../../core/provider-definition.ts";
-import { notionReadScopes, notionWriteScopes } from "./scopes.ts";
+import { notionInsertCommentScopes, notionReadCommentScopes, notionReadScopes, notionWriteScopes } from "./scopes.ts";
 
 const service = "notion";
 
@@ -98,6 +98,14 @@ const comment = s.looseObject(
     last_edited_time: s.dateTime("The time when the comment was last edited."),
     created_by: notionObject,
     rich_text: notionRichText,
+    display_name: s.looseObject(
+      {
+        type: s.stringEnum(["integration", "user", "custom"], { description: "How the author name was chosen." }),
+        resolved_name: s.nullable(s.string({ description: "The author name Notion shows on the comment." })),
+      },
+      { description: "The author name shown on the comment." },
+    ),
+    attachments: s.array(notionObject, { description: "Files attached to the comment." }),
   },
   { description: "A Notion comment object." },
 );
@@ -179,6 +187,47 @@ const pageParent = s.oneOf(
     ),
   ],
   { description: "The official Notion parent object." },
+);
+
+const commentParent = s.oneOf(
+  [
+    s.object(
+      {
+        page_id: s.string({ minLength: 1, description: "The page to comment on." }),
+        type: s.literal("page_id", { description: "Always page_id." }),
+      },
+      { required: ["page_id"], description: "Page parent." },
+    ),
+    s.object(
+      {
+        block_id: s.string({ minLength: 1, description: "The block to attach the comment to." }),
+        type: s.literal("block_id", { description: "Always block_id." }),
+      },
+      { required: ["block_id"], description: "Block parent." },
+    ),
+  ],
+  { description: "The page or block that starts a new discussion." },
+);
+
+const commentDisplayName = s.object(
+  {
+    type: s.stringEnum(["integration", "user", "custom"], {
+      description: "Show the integration's name, the authorizing user's name, or the custom name.",
+    }),
+    custom: s.object(
+      { name: s.string({ minLength: 1, description: "The author name to show." }) },
+      { required: ["name"], description: "Required when type is custom." },
+    ),
+  },
+  { required: ["type"], description: "The author name Notion shows on the comment." },
+);
+
+const commentAttachment = s.object(
+  {
+    file_upload_id: s.string({ minLength: 1, description: "The ID of a Notion file upload whose status is uploaded." }),
+    type: s.literal("file_upload", { description: "Always file_upload." }),
+  },
+  { required: ["file_upload_id"], description: "A file upload to attach." },
 );
 
 /**
@@ -664,7 +713,7 @@ export const notionActions: ActionDefinition[] = [
     operationType: "read",
     description:
       "List the unresolved comments on a Notion page or block with pagination. Comments on a page's blocks are listed by the block's ID. The integration needs the read comments capability.",
-    requiredScopes: notionReadScopes,
+    requiredScopes: notionReadCommentScopes,
     inputSchema: paginationInput("blockId", "The page or block ID whose comments should be listed."),
     outputSchema: listOutput(comment, "Comments returned by Notion."),
   }),
@@ -672,16 +721,19 @@ export const notionActions: ActionDefinition[] = [
     name: "create_comment",
     operationType: "write",
     description:
-      "Create a Notion comment: on a page or block through parent, or as a reply in an existing discussion through discussion_id. The integration needs the insert comments capability.",
-    requiredScopes: notionWriteScopes,
+      "Create a Notion comment: on a page or block through parent, or as a reply in an existing discussion through discussion_id. The integration needs the insert comments capability; without the read comments capability Notion returns only the new comment's object and id.",
+    requiredScopes: notionInsertCommentScopes,
     inputSchema: s.requireExactlyOneProperty(
       s.object(
         {
-          parent: notionParent,
+          parent: commentParent,
           discussion_id: s.string({ minLength: 1, description: "The discussion thread to reply in." }),
           rich_text: richTextArray("The comment body as Notion rich text objects."),
-          attachments: s.array(notionObject, { description: "File upload attachments for the comment." }),
-          display_name: notionObject,
+          attachments: s.array(commentAttachment, {
+            maxItems: 3,
+            description: "Up to 3 uploaded files to attach to the comment.",
+          }),
+          display_name: commentDisplayName,
         },
         { required: ["rich_text"], description: "The input payload for this action." },
       ),
