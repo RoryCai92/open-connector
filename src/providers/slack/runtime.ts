@@ -10,6 +10,7 @@ import {
   optionalNumber,
   optionalRecord,
   optionalString,
+  optionalStringArray,
   requiredString,
 } from "../../core/cast.ts";
 import { assertPublicHttpUrl, readBoundedResponseBytes } from "../../core/request.ts";
@@ -276,11 +277,12 @@ async function slackGetChannelMessages(input: Record<string, unknown>, context: 
     url.searchParams.set("cursor", String(input.cursor));
   }
   applySlackHistoryWindow(url, input);
+  const includeRaw = applySlackIncludeRaw(url, input);
 
   return readSlackMessagePage(
     await slackGetJson<SlackMessagePagePayload>(url, context),
     "conversations.history",
-    readIncludeRaw(input),
+    includeRaw,
   );
 }
 
@@ -312,7 +314,7 @@ async function slackConversationsMembers(
 }
 
 async function slackSearchMessages(input: Record<string, unknown>, context: SlackActionContext): Promise<unknown> {
-  const includeRaw = readIncludeRaw(input);
+  const includeRaw = input.includeRaw === true;
   const query = requiredString(input.query, "query", (message) => new ProviderRequestError(400, message));
   if (input.page != null && input.cursor != null) {
     throw new ProviderRequestError(400, "page and cursor cannot be used together");
@@ -451,11 +453,12 @@ async function slackGetThread(input: Record<string, unknown>, context: SlackActi
     url.searchParams.set("cursor", String(input.cursor));
   }
   applySlackHistoryWindow(url, input);
+  const includeRaw = applySlackIncludeRaw(url, input);
 
   return readSlackMessagePage(
     await slackGetJson<SlackMessagePagePayload>(url, context),
     "conversations.replies",
-    readIncludeRaw(input),
+    includeRaw,
   );
 }
 
@@ -1168,6 +1171,21 @@ function applySlackHistoryWindow(url: URL, input: Record<string, unknown>): void
   }
 }
 
+/**
+ * Apply the shared `includeRaw` opt-in of `conversations.history` /
+ * `conversations.replies` and report whether it is on. Only a literal `true`
+ * opts in. Slack leaves message metadata out of both methods unless the
+ * request sets `include_all_metadata`, and `raw` promises the whole record, so
+ * opting in asks for it too.
+ */
+function applySlackIncludeRaw(url: URL, input: Record<string, unknown>): boolean {
+  const includeRaw = input.includeRaw === true;
+  if (includeRaw) {
+    url.searchParams.set("include_all_metadata", "true");
+  }
+  return includeRaw;
+}
+
 interface SlackMessagePagePayload extends SlackPayloadError {
   messages?: unknown;
   has_more?: unknown;
@@ -1237,14 +1255,6 @@ function requireSlackId(value: unknown, label: string): string {
 }
 
 /**
- * Read the optional `includeRaw` input shared by the message-reading actions.
- * Only a literal `true` opts in; the default stays the normalized row alone.
- */
-function readIncludeRaw(input: Record<string, unknown>): boolean {
-  return input.includeRaw === true;
-}
-
-/**
  * Normalize one `conversations.history` / `conversations.replies` message.
  *
  * `ts` and `text` keep their previous always-present shape (an absent text is
@@ -1254,15 +1264,13 @@ function readIncludeRaw(input: Record<string, unknown>): boolean {
  * exception kept for compatibility: it stays `""` on a message with no
  * author, where `botId` / `username` carry the identity instead.
  *
- * `files`, `attachments`, `blocks` and `metadata` pass through exactly as
- * Slack sent them: they are open vendor shapes, and re-modelling them would
- * drop what an archive or analytics consumer needs kept. With `includeRaw`
- * the whole untouched record rides along under `raw` for consumers that need
- * every field, including ones this normalizer does not know about.
+ * `files`, `attachments`, `blocks` and `metadata` stay out of the row: they
+ * are unbounded nested payloads on a row read in bulk. With `includeRaw` the
+ * whole untouched record rides along under `raw` for a consumer that needs
+ * them, or any other field this normalizer does not model.
  */
 function normalizeSlackMessage(message: Record<string, unknown>, includeRaw = false): Record<string, unknown> {
   const edited = optionalRecord(message.edited) ?? {};
-  const root = optionalRecord(message.root) ?? {};
   const reactions = Array.isArray(message.reactions) ? message.reactions : undefined;
 
   return compactObject({
@@ -1282,27 +1290,12 @@ function normalizeSlackMessage(message: Record<string, unknown>, includeRaw = fa
     parentUserId: optionalString(message.parent_user_id),
     replyCount: optionalInteger(message.reply_count),
     replyUsersCount: optionalInteger(message.reply_users_count),
-    replyUserIds: Array.isArray(message.reply_users) ? message.reply_users.map((user) => String(user)) : undefined,
+    replyUserIds: optionalStringArray(message.reply_users),
     latestReply: optionalString(message.latest_reply),
-    rootTs: optionalString(root.ts),
     isLocked: optionalBoolean(message.is_locked),
     reactions: reactions?.map((reaction) => normalizeSlackReaction(optionalRecord(reaction) ?? {})),
-    ...slackMessagePayloadFields(message),
     raw: includeRaw ? message : undefined,
   });
-}
-
-/**
- * The open vendor payloads carried on a message row, untouched. Each is
- * emitted only when Slack sent it, so an absent list stays absent.
- */
-function slackMessagePayloadFields(message: Record<string, unknown>): Record<string, unknown> {
-  return {
-    files: Array.isArray(message.files) ? message.files : undefined,
-    attachments: Array.isArray(message.attachments) ? message.attachments : undefined,
-    blocks: Array.isArray(message.blocks) ? message.blocks : undefined,
-    metadata: optionalRecord(message.metadata),
-  };
 }
 
 function normalizeSlackReaction(reaction: Record<string, unknown>): Record<string, unknown> {
@@ -1327,7 +1320,6 @@ function normalizeSearchMessageMatch(match: Record<string, unknown>, includeRaw 
     permalink: optionalString(match.permalink),
     teamId: optionalString(match.team),
     type: optionalString(match.type),
-    ...slackMessagePayloadFields(match),
     raw: includeRaw ? match : undefined,
   });
 }
