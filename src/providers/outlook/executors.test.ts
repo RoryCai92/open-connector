@@ -204,15 +204,18 @@ describe("outlook list_messages delta", () => {
   });
 
   it("rejects a deltaLink outside the message allowlist before any fetch", async () => {
-    const fetch = vi.fn();
-    vi.stubGlobal("fetch", fetch);
+    for (const deltaLink of [
+      "https://graph.microsoft.com/v1.0/me/contacts/delta?%24deltatoken=RFRM9",
+      "https:me/drive/root/children",
+    ]) {
+      const fetch = vi.fn();
+      vi.stubGlobal("fetch", fetch);
 
-    const result = await execute("list_messages", {
-      deltaLink: "https://graph.microsoft.com/v1.0/me/contacts/delta?%24deltatoken=RFRM9",
-    });
+      const result = await execute("list_messages", { deltaLink });
 
-    expect(result).toMatchObject({ ok: false, error: { code: "invalid_input" } });
-    expect(fetch).not.toHaveBeenCalled();
+      expect(result).toMatchObject({ ok: false, error: { code: "invalid_input" } });
+      expect(fetch).not.toHaveBeenCalled();
+    }
   });
 
   it("keeps the plain listing shape, with deltaLink null", async () => {
