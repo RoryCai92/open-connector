@@ -316,6 +316,47 @@ recorded request boundary; it does not guarantee exactly-once execution across t
 SaaS deletion is asynchronous after local removal. Scheduling, key-error pause recovery and
 offline clone reset procedures are documented in [SaaS maintenance](saas-maintenance.md).
 
+### Externally Managed Credentials
+
+A host that keeps credentials outside the runtime can create it with `externalCredentials: true`
+(`createConnectorRuntime`; the standalone host reads `OOMOL_CONNECT_EXTERNAL_CREDENTIALS=1`).
+`GET /v1/health` then lists `external_credential` under `capabilities`, and `POST /v1/actions/:actionId`
+and `POST /v1/proxy/:service` accept a `credential` in the JSON body in place of a stored connection:
+the stored credential's own shape (`authType`, the token or key fields, `profile`, `metadata`), as
+`GET /v1/connections/by-id/:appId/export` answers it. The runtime executes with it and stores nothing.
+
+```json
+{
+  "input": {},
+  "credential": {
+    "authType": "oauth2",
+    "accessToken": "...",
+    "tokenType": "Bearer",
+    "expiresAt": "2026-10-01T12:00:00.000Z",
+    "refreshToken": "...",
+    "profile": { "accountId": "account-id", "displayName": "Account", "grantedScopes": ["read"] },
+    "metadata": { "oauthClientConfig": { "clientId": "..." } }
+  }
+}
+```
+
+The credential comes alone: a request that also names a connection (`alias`, `connectionName` or
+`x-oo-connector-app-id`) is refused with `invalid_input`, and a runtime that does not accept
+credentials refuses one with `external_credentials_disabled` rather than falling back to a stored
+connection. A persistent runtime token granted particular connections cannot execute with one
+(`connection_not_allowed`). An OAuth credential that is expired or within a minute of expiring is
+refused with `409 oauth_token_expired` and never refreshed on the caller's behalf: the host refreshes
+it through `POST /v1/credentials/refresh` with `{ "service": "...", "credential": {...} }`, which
+answers the refreshed credential (nothing stored), and retries. The provider's OAuth client secrets
+stay in this runtime's client configuration: an exported credential carries its client without them,
+and a refresh or revocation puts them back when the configured client is the one the credential was
+minted under. A refresh the provider refused answers `400 oauth_token_refresh_failed` (reconnect);
+one the provider did not answer — no response, a timeout, a 5xx — answers `502 provider_error`
+(retry later). `POST /v1/credentials/revoke` takes the same body and answers `revoked`: `done`,
+`failed` or `unsupported`. With an `Idempotency-Key`, the carried credential's service and provider
+account stand for the connection in the request fingerprint, so a refreshed token of the same
+account replays and another account conflicts.
+
 ### Idempotent Action Retries
 
 `POST /v1/actions/:actionId` accepts an optional `Idempotency-Key` header. Without this header,
@@ -400,6 +441,8 @@ by age.
 - `GET /v1/apps/services/:service`
 - `GET /v1/apps/authenticated`
 - `POST /v1/proxy/:service`
+- `POST /v1/credentials/refresh` and `POST /v1/credentials/revoke` — only on a runtime that accepts
+  externally managed credentials (below)
 
 `GET /v1/apps/authenticated` checks the repeated `service` query values and returns the authenticated
 service IDs from that candidate set. It returns an empty list when no candidates are supplied.
@@ -462,7 +505,9 @@ These endpoints power the Web Console, examples, and setup scripts:
   declares a `revocationUrl` has its token posted there (RFC 7009) once the delete has gone through, best
   effort; the answer's `revoked` says `done`, `failed` (the provider refused or could not be reached; the
   credential is deleted all the same), `unsupported` (no `revocationUrl` declared, no OAuth token held, or a
-  SaaS connection) or `skipped` (the body did not ask)
+  SaaS connection) or `skipped` (the body did not ask). With `revision` in the body (the one
+  `GET /v1/connections/by-id/:appId/export` answered), the delete happens only while the stored row still
+  carries it; otherwise `409 connection_changed` and the row stays
 - `GET /api/oauth/configs`
 - `PUT /api/oauth/configs/:service`
 - `DELETE /api/oauth/configs/:service`

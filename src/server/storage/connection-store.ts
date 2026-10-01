@@ -113,23 +113,37 @@ export class SqlConnectionStore implements IConnectionStore {
     return row !== undefined;
   }
 
-  async delete(service: string, connectionName: string): Promise<void> {
+  async delete(service: string, connectionName: string, expectedRevision?: string): Promise<void> {
+    // With a revision to hold to, the row lock above and this predicate make the delete
+    // conditional on the row the caller read: a credential written since stays.
+    const revisionGuard = expectedRevision === undefined ? "" : " and revision = ?";
+    const revisionValues = expectedRevision === undefined ? [] : [expectedRevision];
     const [, , , [remaining]] = await this.transaction([
       {
         sql: "update connections set revision = revision where service = ? and connection_name = ?",
         values: [service, connectionName],
       },
-      queueSaasConnections("service = ? and connection_name = ?", [service, connectionName]),
+      queueSaasConnections(`service = ? and connection_name = ?${revisionGuard}`, [
+        service,
+        connectionName,
+        ...revisionValues,
+      ]),
       {
-        sql: `delete from connections where service = ? and connection_name = ? and not exists
+        sql: `delete from connections where service = ? and connection_name = ?${revisionGuard} and not exists
         (select 1 from trigger_subscriptions where connection_id = connections.id and mode <> 'resource-set' and status in ('active', 'deleting'))`,
-        values: [service, connectionName],
+        values: [service, connectionName, ...revisionValues],
       },
       {
-        sql: "select id from connections where service = ? and connection_name = ?",
+        sql: "select id, revision from connections where service = ? and connection_name = ?",
         values: [service, connectionName],
       },
     ]);
+    if (remaining && expectedRevision !== undefined && remaining.revision !== expectedRevision)
+      throw new HttpRequestError(
+        "connection_changed",
+        "The connection changed since it was read; read it again before disconnecting.",
+        409,
+      );
     if (remaining)
       throw new HttpRequestError(
         "connection_has_subscriptions",

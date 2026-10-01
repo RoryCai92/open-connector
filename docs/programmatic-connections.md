@@ -143,6 +143,13 @@ the stale callback fails instead of recreating it or overwriting the replacement
 New connections receive distinct local aliases. Use the returned `alias` as the connection
 selector when executing actions. Existing local default-connection selection remains available.
 
+A runtime created with `credentialExport` also serves `GET /v1/connections/by-id/:appId/export`,
+which answers the stored connection, its credential with the OAuth client secrets removed, and the
+row's `revision`. A host that keeps credentials outside the runtime stores the credential, then
+deletes the row with `DELETE /api/connections/:service` and that `revision` in the body, so a
+credential written in between is never deleted. Execution with such a credential is described in
+[runtime-api.md](runtime-api.md#externally-managed-credentials).
+
 ## API keys and custom credentials
 
 These operations validate and save credentials synchronously. They return the connection in the

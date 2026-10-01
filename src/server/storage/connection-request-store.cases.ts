@@ -237,4 +237,25 @@ export function connectionRequestStoreTests(getDatabase: () => RuntimeDatabase):
       });
     });
   });
+
+  describe("connection deletes at a revision", () => {
+    it("deletes a connection only while it still carries the expected revision", async () => {
+      const { connectionStore } = getDatabase();
+      const stored = await connectionStore.set("example", "exported", credential);
+      await expect(connectionStore.delete("example", "exported", "another-revision")).rejects.toMatchObject({
+        code: "connection_changed",
+      });
+      await expect(connectionStore.get("example", "exported")).resolves.toMatchObject({
+        id: stored.id,
+        revision: stored.revision,
+      });
+      await connectionStore.delete("example", "exported", stored.revision);
+      await expect(connectionStore.get("example", "exported")).resolves.toBeUndefined();
+
+      // Without a revision the delete takes whatever is there, as before.
+      await connectionStore.set("example", "exported", credential);
+      await connectionStore.delete("example", "exported");
+      await expect(connectionStore.get("example", "exported")).resolves.toBeUndefined();
+    });
+  });
 }

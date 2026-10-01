@@ -27,6 +27,8 @@ export interface ActionRequestFingerprintInput {
   actionId: string;
   connectionName: string;
   connectionId?: string;
+  /** For a request that carries its credential: the service and provider account it names. */
+  credentialFingerprint?: string;
   input: unknown;
   runtimeTokenId?: string;
 }
@@ -66,6 +68,7 @@ export function hashActionRequest(input: ActionRequestFingerprintInput): string 
       actionId: input.actionId,
       connectionName: input.connectionName,
       connectionId: input.connectionId,
+      credentialFingerprint: input.credentialFingerprint,
       input: canonicalize(input.input, 1),
       runtimeTokenId: input.runtimeTokenId,
     }),

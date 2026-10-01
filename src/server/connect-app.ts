@@ -44,6 +44,8 @@ export interface ConnectAppOptions {
   computeRuntimeAuthConfigured?: boolean;
   compressApiResponses?: boolean;
   serveDocumentation?: boolean;
+  externalCredentials?: boolean;
+  credentialExport?: boolean;
 }
 
 export interface ConnectApp {
@@ -166,6 +168,8 @@ export async function createConnectApp(options: ConnectAppOptions): Promise<Conn
       saasOAuth,
       compressApiResponses: options.compressApiResponses,
       serveDocumentation: options.serveDocumentation,
+      externalCredentials: options.externalCredentials,
+      credentialExport: options.credentialExport,
     }).createApp(),
     runtimeAuthConfigured:
       Boolean(options.runtimeToken) ||

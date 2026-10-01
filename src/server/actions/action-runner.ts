@@ -1,7 +1,13 @@
 import type { CatalogStore } from "../../catalog-store.ts";
 import type { ConnectionService, ConnectionSummary, ExecutionConnection } from "../../connection-service.ts";
 import type { ActionPolicyDecision, ActionPolicySnapshot } from "../../core/action-policy.ts";
-import type { RuntimeLogger, ExecutionContext, ExecutionResult, TransitFileWriter } from "../../core/types.ts";
+import type {
+  RuntimeLogger,
+  ExecutionContext,
+  ExecutionResult,
+  ResolvedCredential,
+  TransitFileWriter,
+} from "../../core/types.ts";
 import type { MarketplaceService } from "../../marketplace/marketplace-service.ts";
 import type { IProviderLoader } from "../../providers/provider-loader.ts";
 import type { SaasExecutionService } from "../../saas/saas-execution-service.ts";
@@ -29,6 +35,8 @@ export interface RunActionInput {
   caller: RunLogCaller;
   connectionName?: string;
   connectionId?: string;
+  /** A credential the caller holds, executed with in place of a stored connection; never stored. */
+  credential?: Exclude<ResolvedCredential, { authType: "no_auth" }>;
   policy: ActionPolicySnapshot;
   runtimeTokenId?: string;
   signal?: AbortSignal;
@@ -90,77 +98,105 @@ export class ActionRunner {
       result = cancelledExecutionResult();
     } else {
       try {
-        const summary = await this.options.connections.getConnectionSummary(
-          action.service,
-          input.connectionName,
-          input.connectionId,
-        );
-        input.signal?.throwIfAborted();
-        const connectionPolicy =
-          summary?.authType === "no_auth" ? undefined : input.policy.evaluateConnection(summary?.id);
-        if (connectionPolicy && !connectionPolicy.allowed) {
-          policy = connectionPolicy;
-          result = { ok: false, error: { code: policy.code, message: policy.message } };
-        } else if (summary?.authType === "marketplace" && !this.options.marketplace?.supportsAction(action.id)) {
-          result = {
-            ok: false,
-            error: {
-              code: "connection_not_found",
-              message: "The selected Marketplace connection does not support this action.",
-            },
-          };
+        if (input.credential) {
+          // An externally managed credential names no stored connection, so a token
+          // granted particular connections cannot execute with one.
+          const externalPolicy = input.policy.evaluateConnection();
+          if (!externalPolicy.allowed) {
+            policy = externalPolicy;
+            throw new ConnectionError(externalPolicy.code, externalPolicy.message);
+          }
+          connection = this.options.connections.resolveExternalCredential(action.service, input.credential);
+          const executor = action.execution.locallyExecutable
+            ? await this.options.providerLoader.loadActionExecutor(
+                action.service,
+                action.id,
+                this.options.catalog.providers.find((provider) => provider.service === action.service)?.displayName,
+              )
+            : undefined;
+          input.signal?.throwIfAborted();
+          result = await executeProviderAction(
+            action,
+            executor,
+            input.input,
+            this.createExecutionContext(connection.getCredential, input.signal),
+          );
+          if (input.signal?.aborted) {
+            result = cancelledExecutionResult();
+          }
         } else {
-          connection = await this.options.connections.resolveForExecution(
+          const summary = await this.options.connections.getConnectionSummary(
             action.service,
             input.connectionName,
             input.connectionId,
           );
           input.signal?.throwIfAborted();
-          const targetPolicy =
-            connection.summary?.authType === "no_auth"
-              ? undefined
-              : input.policy.evaluateConnection(connection.summary?.id);
-          if (targetPolicy && !targetPolicy.allowed) {
-            policy = targetPolicy;
-            throw new ConnectionError(targetPolicy.code, targetPolicy.message);
-          }
-          const executor =
-            action.execution.locallyExecutable && connection.kind === "local"
-              ? await this.options.providerLoader.loadActionExecutor(
-                  action.service,
-                  action.id,
-                  this.options.catalog.providers.find((provider) => provider.service === action.service)?.displayName,
-                )
-              : undefined;
-          input.signal?.throwIfAborted();
-          const saasReference = connection.kind === "saas" ? connection.reference : undefined;
-          result = await executeProviderAction(
-            action,
-            saasReference
-              ? async (actionInput) => {
-                  if (!this.options.saas)
-                    throw new SaasError("oauth_source_unavailable", "SaaS execution is unavailable.", 503);
-                  const remote = await this.options.saas.executeAction(
-                    saasReference,
+          const connectionPolicy =
+            summary?.authType === "no_auth" ? undefined : input.policy.evaluateConnection(summary?.id);
+          if (connectionPolicy && !connectionPolicy.allowed) {
+            policy = connectionPolicy;
+            result = { ok: false, error: { code: policy.code, message: policy.message } };
+          } else if (summary?.authType === "marketplace" && !this.options.marketplace?.supportsAction(action.id)) {
+            result = {
+              ok: false,
+              error: {
+                code: "connection_not_found",
+                message: "The selected Marketplace connection does not support this action.",
+              },
+            };
+          } else {
+            connection = await this.options.connections.resolveForExecution(
+              action.service,
+              input.connectionName,
+              input.connectionId,
+            );
+            input.signal?.throwIfAborted();
+            const targetPolicy =
+              connection.summary?.authType === "no_auth"
+                ? undefined
+                : input.policy.evaluateConnection(connection.summary?.id);
+            if (targetPolicy && !targetPolicy.allowed) {
+              policy = targetPolicy;
+              throw new ConnectionError(targetPolicy.code, targetPolicy.message);
+            }
+            const executor =
+              action.execution.locallyExecutable && connection.kind === "local"
+                ? await this.options.providerLoader.loadActionExecutor(
                     action.service,
                     action.id,
-                    actionInput,
-                    input.signal,
-                  );
-                  remoteExecutionId = remote.executionId;
-                  return { ok: true, output: remote.output };
-                }
-              : connection.kind === "marketplace"
-                ? (actionInput) => this.options.marketplace!.execute(action.id, actionInput, input.signal)
-                : executor,
-            input.input,
-            this.createExecutionContext(
-              connection.kind === "local" ? connection.getCredential : async () => undefined,
-              input.signal,
-            ),
-          );
-          if (input.signal?.aborted) {
-            result = cancelledExecutionResult();
+                    this.options.catalog.providers.find((provider) => provider.service === action.service)?.displayName,
+                  )
+                : undefined;
+            input.signal?.throwIfAborted();
+            const saasReference = connection.kind === "saas" ? connection.reference : undefined;
+            result = await executeProviderAction(
+              action,
+              saasReference
+                ? async (actionInput) => {
+                    if (!this.options.saas)
+                      throw new SaasError("oauth_source_unavailable", "SaaS execution is unavailable.", 503);
+                    const remote = await this.options.saas.executeAction(
+                      saasReference,
+                      action.service,
+                      action.id,
+                      actionInput,
+                      input.signal,
+                    );
+                    remoteExecutionId = remote.executionId;
+                    return { ok: true, output: remote.output };
+                  }
+                : connection.kind === "marketplace"
+                  ? (actionInput) => this.options.marketplace!.execute(action.id, actionInput, input.signal)
+                  : executor,
+              input.input,
+              this.createExecutionContext(
+                connection.kind === "local" ? connection.getCredential : async () => undefined,
+                input.signal,
+              ),
+            );
+            if (input.signal?.aborted) {
+              result = cancelledExecutionResult();
+            }
           }
         }
       } catch (error) {
