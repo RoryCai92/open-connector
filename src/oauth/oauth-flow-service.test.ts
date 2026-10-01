@@ -1372,6 +1372,44 @@ describe("OAuthFlowService shared grant (alsoConnect)", () => {
     });
   });
 
+  it("fails the request, storing nothing, when a sibling's OAuth client changes during the consent", async () => {
+    const services = createServices([mail, calendar], {
+      validators: { oauth2: async () => profile("me@example.com") },
+    });
+    await configure(services, googlePair);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => Response.json({ access_token: "shared-access", token_type: "Bearer" })),
+    );
+
+    const started = await services.flow.startConnectionRequest({
+      service: "mail",
+      owner: "test-owner",
+      alsoConnect: ["calendar"],
+    });
+    // Another OAuth client for the sibling, saved while the consent is open: the token the
+    // callback brings was minted for the primary's client and must not be stored under this one.
+    await services.clientConfigs.upsertConfig({
+      service: "calendar",
+      clientId: "another-client-id",
+      clientSecret: "another-client-secret",
+    });
+    await expect(
+      services.flow.completeAuthorization({ state: started.stateHandle, code: "code" }),
+    ).rejects.toMatchObject({
+      code: "request_key_conflict",
+      message: "OAuth connection failed for calendar.",
+    });
+
+    await expect(services.requestDatabase.connectionStore.list()).resolves.toEqual([]);
+    await expect(services.flow.getConnectionRequest(started.connectionRequestId, "test-owner")).resolves.toMatchObject({
+      status: "failed",
+      errorCode: "request_key_conflict",
+      appId: null,
+      connections: [],
+    });
+  });
+
   it("leaves a request without alsoConnect as it was: its own scopes, one connection, listed alone", async () => {
     const services = createServices([mail, calendar], {
       validators: { oauth2: async () => profile("me@example.com") },
