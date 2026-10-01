@@ -1395,9 +1395,13 @@ function createConnectionPath(): Record<string, unknown> {
               {
                 service: jsonSchema.string(),
                 configured: { const: false, type: "boolean" },
+                revoked: jsonSchema.stringEnum(
+                  "What the disconnect did about the grant at the provider: done (its revocation endpoint accepted the token), failed (it refused or could not be reached; the credential is deleted here regardless), unsupported (no revocation endpoint declared, no OAuth token held, or a SaaS connection) or skipped (the request body did not set revoke: true, the default).",
+                  ["done", "failed", "unsupported", "skipped"],
+                ),
               },
               {
-                required: ["service", "configured"],
+                required: ["service", "configured", "revoked"],
                 description: "Disconnected provider summary.",
               },
             ),
