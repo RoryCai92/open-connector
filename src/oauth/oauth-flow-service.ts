@@ -212,38 +212,51 @@ export class OAuthFlowService {
   ): Promise<SharedGrantSibling[]> {
     const siblings: SharedGrantSibling[] = [];
     if (!alsoConnect?.length) return siblings;
+    for (const sibling of new Set(alsoConnect)) {
+      const resolved = await this.resolveSharedGrantSibling(service, config, sibling, "invalid_input");
+      siblings.push({ service: sibling, scopes: this.clientConfigs.getEffectiveScopes(sibling, resolved.config) });
+    }
+    return siblings;
+  }
+
+  /**
+   * The checks one `alsoConnect` sibling must pass: a known, available oauth2 provider whose OAuth
+   * client is configured, resolves to the primary's authorization and token endpoints and is the
+   * same client id. Run at the start of a request and again at its callback, with the code each
+   * road answers: the sibling's client config may have changed in between, and a token minted for
+   * the primary's client must not be stored under another.
+   */
+  private async resolveSharedGrantSibling(
+    service: string,
+    config: OAuthClientConfig,
+    sibling: string,
+    code: "invalid_input" | "request_key_conflict",
+  ): Promise<{ auth: OAuth2AuthDefinition; config: OAuthClientConfig }> {
     const endpoints = (target: string, auth: OAuth2AuthDefinition, targetConfig: OAuthClientConfig): string[] => [
       this.clientConfigs.resolveEndpointUrl(target, auth.authorizationUrl, targetConfig),
       this.clientConfigs.resolveEndpointUrl(target, auth.tokenUrl, targetConfig),
     ];
-    const primaryEndpoints = endpoints(service, this.clientConfigs.getOAuthDefinition(service), config);
-    for (const sibling of new Set(alsoConnect)) {
-      if (sibling === service)
-        throw new OAuthFlowError("invalid_input", `alsoConnect must not name the connecting provider: ${sibling}.`);
-      let siblingAuth: OAuth2AuthDefinition;
-      try {
-        siblingAuth = this.clientConfigs.getOAuthDefinition(sibling);
-        this.connections.assertProviderAvailable(sibling);
-      } catch {
-        throw new OAuthFlowError("invalid_input", `alsoConnect names a provider without OAuth: ${sibling}.`);
-      }
-      const siblingConfig = await this.clientConfigs.getConfig(sibling);
-      if (!siblingConfig)
-        throw new OAuthFlowError("invalid_input", `alsoConnect: configure an OAuth client for ${sibling} first.`);
-      const siblingEndpoints = endpoints(sibling, siblingAuth, siblingConfig);
-      if (siblingEndpoints.some((endpoint, index) => endpoint !== primaryEndpoints[index]))
-        throw new OAuthFlowError(
-          "invalid_input",
-          `alsoConnect: ${sibling} does not share the OAuth endpoints of ${service}.`,
-        );
-      if (siblingConfig.clientId !== config.clientId)
-        throw new OAuthFlowError(
-          "invalid_input",
-          `alsoConnect: ${sibling} is configured with another OAuth client than ${service}.`,
-        );
-      siblings.push({ service: sibling, scopes: this.clientConfigs.getEffectiveScopes(sibling, siblingConfig) });
+    if (sibling === service)
+      throw new OAuthFlowError(code, `alsoConnect must not name the connecting provider: ${sibling}.`);
+    let siblingAuth: OAuth2AuthDefinition;
+    try {
+      siblingAuth = this.clientConfigs.getOAuthDefinition(sibling);
+      this.connections.assertProviderAvailable(sibling);
+    } catch {
+      throw new OAuthFlowError(code, `alsoConnect names a provider without OAuth: ${sibling}.`);
     }
-    return siblings;
+    const siblingConfig = await this.clientConfigs.getConfig(sibling);
+    if (!siblingConfig) throw new OAuthFlowError(code, `alsoConnect: configure an OAuth client for ${sibling} first.`);
+    const primaryEndpoints = endpoints(service, this.clientConfigs.getOAuthDefinition(service), config);
+    const siblingEndpoints = endpoints(sibling, siblingAuth, siblingConfig);
+    if (siblingEndpoints.some((endpoint, index) => endpoint !== primaryEndpoints[index]))
+      throw new OAuthFlowError(code, `alsoConnect: ${sibling} does not share the OAuth endpoints of ${service}.`);
+    if (siblingConfig.clientId !== config.clientId)
+      throw new OAuthFlowError(
+        code,
+        `alsoConnect: ${sibling} is configured with another OAuth client than ${service}.`,
+      );
+    return { auth: siblingAuth, config: siblingConfig };
   }
 
   private async prepareAuthorization(
@@ -408,25 +421,27 @@ export class OAuthFlowService {
         const siblings: SharedGrantCredential[] = [];
         for (const service of request.alsoConnect ?? []) {
           try {
-            const siblingConfig = await this.clientConfigs.getConfig(service);
-            if (!siblingConfig)
-              throw new OAuthFlowError(
-                "oauth_client_config_required",
-                `Configure an OAuth client for ${service} first.`,
-              );
+            // Checked again here: the sibling's client config may have changed since the start,
+            // and the token was minted for the primary's client.
+            const sibling = await this.resolveSharedGrantSibling(
+              pending.service,
+              config,
+              service,
+              "request_key_conflict",
+            );
             const siblingCredential = await this.connections.prepareOAuthCredential(
               service,
               {
                 ...oauthCredential,
                 metadata: {
                   ...oauthCredential.metadata,
-                  oauthClientExtra: siblingConfig.extra,
-                  oauthClientSecretExtra: siblingConfig.secretExtra,
+                  oauthClientExtra: sibling.config.extra,
+                  oauthClientSecretExtra: sibling.config.secretExtra,
                 },
               },
               input.signal,
             );
-            assertRequiredScopesGranted(this.clientConfigs.getOAuthDefinition(service), siblingCredential);
+            assertRequiredScopesGranted(sibling.auth, siblingCredential);
             siblings.push({ service, credential: siblingCredential });
           } catch (error) {
             throw new SharedGrantError(service, error);
