@@ -101,10 +101,11 @@ export interface StoredLocalConnection {
 
 export interface DisconnectOptions {
   /**
-   * Revoke the OAuth grant at the provider before the credential is deleted
-   * (the default). `false` forgets the credential here only — for a caller
-   * replacing one connection of an account with another whose grant is the
-   * same at the provider, where revoking would end the one it keeps.
+   * `true` also revokes the OAuth grant at the provider once the credential is
+   * deleted here, and the answer's `revoked` says how that went. Omitted or
+   * `false` (the default) deletes the credential alone and answers `skipped` —
+   * the right call when another connection of the same account shares the
+   * grant at the provider, where revoking would end the one that stays.
    */
   revoke?: boolean;
 }
