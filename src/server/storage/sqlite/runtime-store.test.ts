@@ -56,6 +56,7 @@ describe("SqliteRuntimeDatabase", () => {
       "0011_runtime_token_connection_scope.sql",
       "0012_marketplace.sql",
       "0013_connection_requests.sql",
+      "0014_connection_request_connections.sql",
       "0014_saas_project.sql",
       "0015_saas_cleanup_runtime.sql",
       "0016_trigger_policy.sql",
