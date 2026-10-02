@@ -7,12 +7,22 @@ import { provider as microsoftTodo } from "./microsoft_todo/definition.ts";
 import { provider as oneDrive } from "./one_drive/definition.ts";
 import { provider as outlook } from "./outlook/definition.ts";
 import { provider as outlookCalendar } from "./outlook_calendar/definition.ts";
+import { provider as slack } from "./slack/definition.ts";
 
 // The providers whose vendor registers public clients beside confidential
 // ones: the secret may be left blank, in which case the runtime sends the
 // client id alone and relies on PKCE. A configuration with a secret is sent
 // exactly as before, so the flag changes nothing for an existing deployment.
-const optionalSecretProviders = [outlook, outlookCalendar, microsoftTeams, microsoftTodo, excel, oneDrive, linear];
+const optionalSecretProviders = [
+  outlook,
+  outlookCalendar,
+  microsoftTeams,
+  microsoftTodo,
+  excel,
+  oneDrive,
+  linear,
+  slack,
+];
 
 describe("providers that accept a public client", () => {
   it("keep their confidential method, declare PKCE, and report the secret as optional", () => {
@@ -30,5 +40,13 @@ describe("providers that accept a public client", () => {
         secret: true,
       });
     }
+  });
+
+  it("keep Slack's refresh on oauth.v2.access, and tell the host what the PKCE switch does", () => {
+    const auth = slack.auth.find((candidate) => candidate.type === "oauth2");
+    if (!auth || auth.type !== "oauth2") throw new Error("expected Slack's OAuth definition");
+    expect(auth.refreshTokenUrl).toBe("https://slack.com/api/oauth.v2.access");
+    expect(auth.clientSetup?.steps.join(" ")).toContain("one-way");
+    expect(auth.clientSetup?.steps.join(" ")).toContain("slackbot");
   });
 });
