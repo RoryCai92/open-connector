@@ -338,6 +338,17 @@ describe("OAuthCredentialRefreshService revoke", () => {
     expect(body.get("client_id")).toBe("connection-client");
   });
 
+  it("rejects HTTP endpoints even when no client configuration is stored", async () => {
+    const fetcher = vi.fn();
+    vi.stubGlobal("fetch", fetcher);
+    const service = new OAuthCredentialRefreshService(revokingConfigs("http://provider.example.com/revoke", undefined));
+
+    await expect(service.revoke("example", expiredCredential({}))).rejects.toThrow(
+      "OAuth revocation URL must use https.",
+    );
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
   it("refuses a templated endpoint it cannot fill in, so the caller records a failure", async () => {
     const fetcher = vi.fn();
     vi.stubGlobal("fetch", fetcher);

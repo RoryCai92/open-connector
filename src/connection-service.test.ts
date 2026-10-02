@@ -1120,11 +1120,6 @@ describe("ConnectionService", () => {
   });
 });
 
-// Disconnect ends the grant at the provider before it deletes the credential
-// here, when the provider declares a revocation endpoint — otherwise a provider
-// the user removed keeps listing an app that can no longer see it. The
-// revocation is best effort: whatever the provider answers, the credential is
-// gone afterwards, and the answer's `revoked` says which of the two happened.
 describe("ConnectionService disconnect revocation", () => {
   const revocableProvider: ProviderDefinition = {
     ...oauthProvider,
@@ -1198,9 +1193,12 @@ describe("ConnectionService disconnect revocation", () => {
     return body;
   }
 
-  it("posts the refresh token once to the provider's revocation endpoint, then deletes the connection", async () => {
+  it("deletes the connection before posting the refresh token once", async () => {
     const { service, store, logger } = await connectRevocable(revocableProvider);
-    const fetcher = stubRevocationResponse(() => new Response(null, { status: 200 }));
+    const fetcher = stubRevocationResponse(async () => {
+      await expect(store.get("revocable", "default")).resolves.toBeUndefined();
+      return new Response(null, { status: 200 });
+    });
 
     await expect(service.disconnect("revocable", undefined, { revoke: true })).resolves.toEqual({
       service: "revocable",

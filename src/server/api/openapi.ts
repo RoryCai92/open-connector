@@ -1387,6 +1387,22 @@ function createConnectionPath(): Record<string, unknown> {
     delete: {
       tags: ["Connections"],
       summary: "Disconnect a provider.",
+      requestBody: {
+        required: false,
+        content: {
+          "application/json": {
+            schema: jsonSchema.object({
+              connectionName: jsonSchema.string("Named connection. Defaults to default."),
+              revoke: {
+                type: "boolean",
+                default: false,
+                description:
+                  "Also request OAuth token revocation after deleting the local credential. Related connections may lose authorization depending on the provider's revocation policy.",
+              },
+            }),
+          },
+        },
+      },
       responses: {
         200: jsonResponse({
           anyOf: [

@@ -27,7 +27,7 @@ export interface IOAuthCredentialRefresher {
    * Revoke the credential at the provider's `revocationUrl`: `done` or
    * `unsupported` (none declared); a refusal or an unreachable endpoint throws.
    */
-  revoke?(service: string, credential: OAuthCredential): Promise<Exclude<OAuthRevocationOutcome, "failed">>;
+  revoke?(service: string, credential: OAuthCredential): Promise<"done" | "unsupported">;
 }
 
 /**
@@ -109,13 +109,11 @@ export class OAuthCredentialRefreshService implements IOAuthCredentialRefresher 
   }
 
   /**
-   * RFC 7009 revocation of the connection's grant. The refresh token is the
-   * whole grant (revoking it ends every access token minted from it), so it is
-   * what gets posted; the access token stands in when none was issued. The
-   * request is authenticated the way the token endpoint is, with the client
-   * configuration the credential was minted under, like a refresh.
+   * Revoke the refresh token, or the access token when none was issued, using
+   * the client configuration the credential was minted under. The provider
+   * determines whether related tokens and the underlying grant are revoked.
    */
-  async revoke(service: string, credential: OAuthCredential): Promise<Exclude<OAuthRevocationOutcome, "failed">> {
+  async revoke(service: string, credential: OAuthCredential): Promise<"done" | "unsupported"> {
     let auth: OAuth2AuthDefinition;
     try {
       auth = this.clientConfigs.getOAuthDefinition(service);

@@ -2,8 +2,9 @@ import type { OAuth2AuthDefinition } from "../core/types.ts";
 import type { OAuthClientConfig } from "./oauth-client-config-service.ts";
 
 import { optionalRecord, optionalString, requiredString } from "../core/cast.ts";
-import { readBoundedResponseBytes } from "../core/request.ts";
+import { assertPublicHttpUrl, readBoundedResponseBytes } from "../core/request.ts";
 import {
+  basicAuthorizationHeader,
   createProviderTimeout,
   isAbortLikeError,
   providerFetch,
@@ -15,7 +16,7 @@ const oauthTokenResponseMaxBytes = 1024 * 1024;
  * A revocation is best effort and runs inside a disconnect the user is waiting
  * on, so it gets a short deadline rather than the provider request default.
  */
-export const oauthRevocationTimeoutMs = 5_000;
+const oauthRevocationTimeoutMs = 5_000;
 /** Longest `expires_in` we accept; anything larger overflows the ECMAScript `Date` range. */
 const maxExpiresInSeconds = 100 * 365 * 24 * 60 * 60;
 
@@ -98,7 +99,7 @@ interface TokenRequest extends OAuthTokenRequestOptions {
 
 export type OAuthTokenErrorFactory = (message: string) => Error;
 
-export interface TokenRevocationRequest {
+interface TokenRevocationRequest {
   revocationUrl: string;
   token: string;
   tokenTypeHint: "access_token" | "refresh_token";
@@ -121,6 +122,13 @@ export interface TokenRevocationRequest {
  * the message, never the body.
  */
 export async function requestTokenRevocation(input: TokenRevocationRequest): Promise<void> {
+  const url = assertPublicHttpUrl(input.revocationUrl, {
+    fieldName: "OAuth revocation URL",
+    createError: input.createError,
+  });
+  if (url.protocol !== "https:") {
+    throw input.createError("OAuth revocation URL must use https.");
+  }
   const fields: Record<string, string> = { token: input.token, token_type_hint: input.tokenTypeHint };
   const headers: Record<string, string> = {
     accept: "application/json",
@@ -130,9 +138,9 @@ export async function requestTokenRevocation(input: TokenRevocationRequest): Pro
   if (input.clientId) {
     if (input.tokenEndpointAuthMethod === "client_secret_basic") {
       // The header carries the client's identity; the body does not repeat it.
-      headers.authorization = `Basic ${Buffer.from(
+      headers.authorization = basicAuthorizationHeader(
         `${encodeOAuthBasicCredential(input.clientId)}:${encodeOAuthBasicCredential(input.clientSecret ?? "")}`,
-      ).toString("base64")}`;
+      );
     } else {
       const clientIdField = input.tokenRequestFields?.clientId;
       if (clientIdField !== false) {
@@ -169,6 +177,7 @@ export async function requestTokenRevocation(input: TokenRevocationRequest): Pro
   }
   try {
     if (response.ok) {
+      void response.body?.cancel().catch(() => undefined);
       return;
     }
     let code: string | undefined;
@@ -176,14 +185,13 @@ export async function requestTokenRevocation(input: TokenRevocationRequest): Pro
       const bytes = await readBoundedResponseBytes(response, {
         maxBytes: oauthTokenResponseMaxBytes,
         fieldName: "OAuth revocation response",
+        signal: timeout.signal,
         createError: (message) => new OAuthTokenResponseSizeError(message),
       });
       code = optionalString(decodeTokenPayload(bytes).error);
     } catch {
       code = undefined;
     }
-    // Revocation endpoints answer a dead token with 400 and an error code
-    // (`invalid_token`); the code is the one thing worth repeating.
     throw input.createError(`OAuth token revocation failed (HTTP ${response.status}${code ? `, ${code}` : ""}).`);
   } finally {
     timeout.cleanup();
@@ -217,9 +225,9 @@ async function requestToken(input: TokenRequest): Promise<OAuthTokenResult> {
   let body: BodyInit;
 
   if (input.tokenEndpointAuthMethod === "client_secret_basic") {
-    headers.authorization = `Basic ${Buffer.from(
+    headers.authorization = basicAuthorizationHeader(
       `${encodeOAuthBasicCredential(input.clientId)}:${encodeOAuthBasicCredential(input.clientSecret)}`,
-    ).toString("base64")}`;
+    );
   } else if (input.tokenEndpointAuthMethod === "client_secret_post") {
     const clientSecretField = input.tokenRequestFields?.clientSecret;
     if (clientSecretField !== false) {

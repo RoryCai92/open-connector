@@ -368,6 +368,44 @@ describe("OAuth token revocation", () => {
     vi.restoreAllMocks();
   });
 
+  it("rejects HTTP revocation endpoints before sending credentials", async () => {
+    const fetcher = vi.fn();
+    vi.stubGlobal("fetch", fetcher);
+
+    await expect(
+      requestTokenRevocation({
+        ...revocationRequest,
+        revocationUrl: "http://provider.example.com/revoke",
+      }),
+    ).rejects.toThrow("OAuth revocation URL must use https.");
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it("cancels an unread successful response body", async () => {
+    const cancel = vi.fn();
+    stubRevocationResponse(() => new Response(new ReadableStream({ cancel }), { status: 200 }));
+
+    await requestTokenRevocation({ ...revocationRequest });
+
+    expect(cancel).toHaveBeenCalledOnce();
+  });
+
+  it("stops reading an incomplete error response at the deadline", async () => {
+    vi.useFakeTimers();
+    try {
+      const cancel = vi.fn();
+      stubRevocationResponse(() => new Response(new ReadableStream({ cancel }), { status: 400 }));
+      const outcome = readRejectionMessage(requestTokenRevocation({ ...revocationRequest }));
+
+      await vi.advanceTimersByTimeAsync(5_000);
+
+      await expect(outcome).resolves.toBe("OAuth token revocation failed (HTTP 400).");
+      expect(cancel).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("revokes with an RFC 7009 form POST authenticated like the token endpoint", async () => {
     const fetcher = stubRevocationResponse(() => new Response(null, { status: 200 }));
 
