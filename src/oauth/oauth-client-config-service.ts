@@ -80,6 +80,8 @@ export interface IOAuthClientConfigStore {
  * OAuth app. Managed OAuth clients are intentionally outside this local runtime.
  */
 export class OAuthClientConfigService {
+  /** The write in flight per service (serialized); absent when none. */
+  private readonly writes = new Map<string, Promise<void>>();
   private static readonly callbackPath = "/oauth/callback";
 
   private readonly catalog: CatalogStore;
@@ -121,10 +123,34 @@ export class OAuthClientConfigService {
   }
 
   async upsertConfig(input: OAuthClientConfigInput & { service: string }): Promise<OAuthClientConfigSummary> {
-    const stored = normalizeStoredOAuthClientConfig(await this.store.get(input.service));
-    const config = this.normalizeConfig(input.service, input, stored);
-    await this.store.set(config);
-    return this.toSummary(input.service, this.getOAuthDefinition(input.service), config);
+    return this.serialized(input.service, async () => {
+      const stored = normalizeStoredOAuthClientConfig(await this.store.get(input.service));
+      const config = this.normalizeConfig(input.service, input, stored);
+      await this.store.set(config);
+      return this.toSummary(input.service, this.getOAuthDefinition(input.service), config);
+    });
+  }
+
+  /**
+   * Run one write of a service's configuration at a time, in arrival order:
+   * a save that keeps the stored secret reads it and writes it back, and a
+   * save that rotates the secret must not land between the two (the store
+   * keeps the configuration as one encrypted value, so the read and the
+   * write cannot be one SQL statement). Writes to different services never
+   * wait on each other.
+   */
+  private serialized<T>(service: string, write: () => Promise<T>): Promise<T> {
+    const previous = this.writes.get(service) ?? Promise.resolve();
+    const run = previous.then(write, write);
+    const settled = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    this.writes.set(service, settled);
+    void settled.then(() => {
+      if (this.writes.get(service) === settled) this.writes.delete(service);
+    });
+    return run;
   }
 
   /**
@@ -176,6 +202,10 @@ export class OAuthClientConfigService {
   }
 
   async deleteConfig(service: string): Promise<{ service: string; configured: false }> {
+    return this.serialized(service, () => this.deleteConfigNow(service));
+  }
+
+  private async deleteConfigNow(service: string): Promise<{ service: string; configured: false }> {
     this.getOAuthDefinition(service);
     await this.store.delete(service);
     return { service, configured: false };

@@ -1992,7 +1992,7 @@ function ConnectionForm(props: ConnectionFormProps): ReactNode {
               required={props.auth.clientFields?.some((field) => field.key === "clientSecret" && field.required)}
             />
             {props.auth.clientSecretOptional ? (
-              <small>{t("providers.oauthClientSettings.optionalSecretHint")}</small>
+              <small>{t("providers.oauthClientSettings.optionalSecretManualHint")}</small>
             ) : null}
           </Label>
           {manualClientConfigFields.map((field) => (
