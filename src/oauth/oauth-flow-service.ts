@@ -19,7 +19,7 @@ import type { OAuthTokenResult } from "./oauth-token.ts";
 import { createHash, randomBytes } from "node:crypto";
 import { ConnectionError } from "../connection-service.ts";
 import { providerFetch } from "../providers/provider-runtime.ts";
-import { requestAuthorizationCodeToken } from "./oauth-token.ts";
+import { requestAuthorizationCodeToken, resolveTokenEndpointAuthMethod } from "./oauth-token.ts";
 
 /**
  * Started OAuth authorization flow returned to the local console.
@@ -379,7 +379,7 @@ export class OAuthFlowService {
           redirectUri,
           responseEnvelope: auth.tokenResponseEnvelope,
           tokenRequestFields: auth.tokenRequestFields,
-          tokenEndpointAuthMethod: auth.tokenEndpointAuthMethod,
+          tokenEndpointAuthMethod: resolveTokenEndpointAuthMethod(auth, config.clientSecret),
           tokenRequestFormat: auth.tokenRequestFormat,
           tokenUrl,
           extraFields: createTokenExtraFields(pending, auth.tokenRequestCallbackParameters, input.callbackParameters),
