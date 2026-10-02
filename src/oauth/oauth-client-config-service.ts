@@ -3,7 +3,7 @@ import type { OAuth2AuthDefinition, OAuthClientConfigFieldDefinition } from "../
 
 import { optionalRecord, optionalString, optionalStringArray } from "../core/cast.ts";
 import { normalizeCredentialValues } from "../core/credential-fields.ts";
-import { oauthClientFields } from "../core/provider-setup.ts";
+import { acceptsPublicClient, oauthClientFields } from "../core/provider-setup.ts";
 import { assertPublicHttpUrl } from "../core/request.ts";
 
 /**
@@ -121,19 +121,32 @@ export class OAuthClientConfigService {
   }
 
   async upsertConfig(input: OAuthClientConfigInput & { service: string }): Promise<OAuthClientConfigSummary> {
-    const config = this.normalizeConfig(input.service, input);
+    const stored = normalizeStoredOAuthClientConfig(await this.store.get(input.service));
+    const config = this.normalizeConfig(input.service, input, stored);
     await this.store.set(config);
     return this.toSummary(input.service, this.getOAuthDefinition(input.service), config);
   }
 
-  normalizeConfig(service: string, input: OAuthClientConfigInput): OAuthClientConfig {
+  /**
+   * Validate and normalize a client configuration. `stored` is the
+   * configuration being replaced, when there is one: on a provider that
+   * accepts a public client, a blank secret saved over the same client id
+   * keeps the stored secret — the console never shows a saved secret, so a
+   * blank field means "unchanged", never "remove" (delete the configuration
+   * to drop a secret). A blank secret with no stored one, or under another
+   * client id, saves a public client.
+   */
+  normalizeConfig(service: string, input: OAuthClientConfigInput, stored?: OAuthClientConfig): OAuthClientConfig {
     const auth = this.getOAuthDefinition(service);
     const clientId = input.clientId.trim();
-    const clientSecret = input.clientSecret.trim();
+    let clientSecret = input.clientSecret.trim();
     if (!clientId) {
       throw new OAuthClientConfigError("invalid_input", "clientId is required.");
     }
-    if (!clientSecret && auth.tokenEndpointAuthMethod !== "none") {
+    if (!clientSecret && acceptsPublicClient(auth) && stored?.clientSecret && stored.clientId === clientId) {
+      clientSecret = stored.clientSecret;
+    }
+    if (!clientSecret && !acceptsPublicClient(auth)) {
       throw new OAuthClientConfigError("invalid_input", "clientSecret is required.");
     }
 
