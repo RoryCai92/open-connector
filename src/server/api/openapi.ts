@@ -98,7 +98,7 @@ const oauthClientConfigRequestSchema = jsonSchema.object(
     requestedScopes: jsonSchema.array(jsonSchema.string(), {
       minItems: 1,
       description:
-        "Non-empty subset of the provider's declared and optional scopes to request. Omit to request every declared scope and no optional one.",
+        "Complete non-empty scope list replacing the provider defaults. Each scope must be declared in scopes or optionalScopes. Omit to request every default scope and no optional scopes.",
     }),
     redirectUri: jsonSchema.string({
       description:
@@ -1433,7 +1433,8 @@ function createOAuthAuthorizationPath(): Record<string, unknown> {
                 }),
                 requestedScopes: jsonSchema.array(jsonSchema.string(), {
                   minItems: 1,
-                  description: "Optional non-empty subset of the provider's declared and optional scopes to request.",
+                  description:
+                    "Optional complete non-empty scope list replacing the provider defaults. Each scope must be declared in scopes or optionalScopes; default scopes are not added automatically.",
                 }),
                 redirectUri: jsonSchema.string({
                   description:
@@ -1488,7 +1489,7 @@ function createOAuthConfigPath(): Record<string, unknown> {
       tags: ["OAuth"],
       summary: "Upsert local OAuth client configuration.",
       description:
-        "Open-source users provide their own OAuth app. requestedScopes may narrow the provider-declared defaults or add the provider's optional scopes; a scope the provider declares in neither is refused. Additional extra fields are declared by provider catalog auth metadata.",
+        "Open-source users provide their own OAuth app. requestedScopes replaces the default scope list with an explicit selection from the provider's scopes and optionalScopes; default scopes are not added automatically. Omit it to use the defaults without optional scopes. Undeclared scopes are refused. Additional extra fields are declared by provider catalog auth metadata.",
       requestBody: {
         required: true,
         content: {
@@ -1766,10 +1767,12 @@ function connectionManagementPaths(): Record<string, unknown> {
             steps: jsonSchema.stringArray("Ordered setup steps."),
           }),
         ),
-        scopes: jsonSchema.optional(jsonSchema.stringArray("Provider scopes the connector requests.")),
+        scopes: jsonSchema.optional(
+          jsonSchema.stringArray("Default provider scopes when no explicit selection is made."),
+        ),
         optionalScopes: jsonSchema.optional(
           jsonSchema.stringArray(
-            "Provider scopes a client config may request beyond scopes; never requested unless named.",
+            "Additional provider scopes for explicit selection. requestedScopes replaces the default scope list.",
           ),
         ),
         authorizationOptions: jsonSchema.optional(jsonSchema.array(authorizationOption)),

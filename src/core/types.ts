@@ -134,12 +134,11 @@ export type OAuth2AuthDefinition = {
   tokenUrl: string;
   /** Provider token endpoint used to refresh an access token. Defaults to tokenUrl. */
   refreshTokenUrl?: string;
-  /** OAuth scopes joined with spaces into the authorization URL `scope` parameter. */
+  /** Default OAuth scopes when no requestedScopes or authorization options are selected. */
   scopes: string[];
   /**
-   * Scopes a client config may name in `requestedScopes` beyond `scopes`. They never join an
-   * authorization request unless named, so a deployment without `requestedScopes` keeps asking
-   * for `scopes` alone.
+   * Additional scopes available for explicit selection through requestedScopes or authorization
+   * options. requestedScopes replaces the default list; default scopes are not added automatically.
    */
   optionalScopes?: string[];
   /** Selectable provider-native OAuth scopes for programmatic connections. */

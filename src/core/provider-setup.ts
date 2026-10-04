@@ -24,7 +24,7 @@ export type ProviderAuthSetup =
       clientFields: OAuthClientConfigFieldDefinition[];
       clientSetup?: OAuth2AuthDefinition["clientSetup"];
       scopes: string[];
-      /** Scopes a client config may request beyond `scopes`; never requested unless named. */
+      /** Additional scopes for explicit selection; requestedScopes replaces the default list. */
       optionalScopes?: string[];
       authorizationOptions?: OAuth2AuthDefinition["authorizationOptions"];
     };
