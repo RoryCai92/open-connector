@@ -221,6 +221,17 @@ export class OAuthClientConfigService {
   }
 
   /**
+   * The requested scopes a stored client config still stands by: its list
+   * without the scopes the service may no longer request, or undefined (the
+   * provider defaults) when none survive. A flow that re-normalizes a stored
+   * config reads its scopes here, so a scope that stopped being requestable
+   * after the config was saved is dropped instead of refusing the flow.
+   */
+  getStoredRequestedScopes(service: string, config: OAuthClientConfig): string[] | undefined {
+    return filterDeclaredScopes(config.requestedScopes, this.scopeLimit(service, this.getOAuthDefinition(service)));
+  }
+
+  /**
    * The scopes a client config of the service is held to: the provider's
    * declared and optional scopes, or no limit when the host allows the service
    * to request undeclared scopes.
