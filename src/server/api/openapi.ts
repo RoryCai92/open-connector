@@ -247,7 +247,7 @@ export function createOpenApiDocument(
           runtime: jsonSchema.string({ description: "Runtime identifier." }),
           capabilities: jsonSchema.array(jsonSchema.string(), {
             description:
-              "Optional abilities of this runtime: external_credential (a credential may ride in the body of action and proxy requests, and /v1/credentials/refresh and /v1/credentials/revoke are served).",
+              "Optional abilities of this runtime: external_credential (a credential may ride in the body of action and proxy requests, and /v1/credentials/refresh and /v1/credentials/revoke are served) and credential_export (GET /v1/connections/by-id/{appId}/export is served).",
           }),
         },
         { required: ["ok", "runtime", "capabilities"], description: "Runtime health payload." },
@@ -510,7 +510,7 @@ export function createOpenApiDocument(
           },
           {
             required: ["authType", "accessToken", "tokenType", "profile", "metadata"],
-            description: "An OAuth credential in the shape the runtime stores it.",
+            description: "An OAuth credential in the shape the runtime stores it, as an export answers it.",
           },
         ),
         ExternalCredential: jsonSchema.anyOf(
@@ -1538,6 +1538,9 @@ function createConnectionPath(): Record<string, unknown> {
                 description:
                   "Also request OAuth token revocation after deleting the local credential. Related connections may lose authorization depending on the provider's revocation policy.",
               },
+              revision: jsonSchema.string(
+                "Delete only while the stored row still carries this revision (the one GET /v1/connections/by-id/{appId}/export answered, beside the exported connection's connectionName); a row that changed or is gone answers 409 connection_changed.",
+              ),
             }),
           },
         },
@@ -1980,6 +1983,23 @@ function connectionManagementPaths(): Record<string, unknown> {
       data: app,
       parameters: [parameter("appId")],
       errorStatuses: [401, 403, 404],
+    }),
+    "/v1/connections/by-id/{appId}/export": runtimeGetOperation("Connections", "Export a stored credential.", {
+      data: jsonSchema.object(
+        {
+          connection: app,
+          credential: { $ref: "#/components/schemas/ExternalCredential" },
+          revision: jsonSchema.string({
+            description:
+              "The stored row's revision. Pass it as revision to DELETE /api/connections/{service} to delete only this version of the connection.",
+          }),
+        },
+        { required: ["connection", "credential", "revision"], description: "A stored connection and its credential." },
+      ),
+      parameters: [parameter("appId")],
+      errorStatuses: [400, 401, 403, 404],
+      description:
+        "Served only by a runtime created with credentialExport. Hands the stored credential to the administrator with the OAuth client secrets removed, for a host that keeps credentials outside the runtime; a refresh or revocation of the credential through /v1/credentials/* puts the secrets back from this runtime's OAuth client configuration. A SaaS connection holds no credential here and answers invalid_input.",
     }),
     "/v1/connection-requests/{connectionRequestId}": runtimeGetOperation(
       "Connections",

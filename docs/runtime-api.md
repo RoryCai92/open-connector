@@ -323,7 +323,8 @@ A host that keeps credentials outside the runtime can create it with `externalCr
 `GET /v1/health` then lists `external_credential` under `capabilities`, and `POST /v1/actions/:actionId`
 and `POST /v1/proxy/:service` accept a `credential` in the JSON body in place of a stored connection:
 the stored credential's own shape (`authType`, the token or key fields, `profile`, `metadata`;
-`expiresAt` is the credential's own expiry). The runtime executes with it and stores nothing.
+`expiresAt` is the credential's own expiry), as `GET /v1/connections/by-id/:appId/export` answers
+it. The runtime executes with it and stores nothing.
 
 ```json
 {
@@ -348,9 +349,9 @@ connection. A persistent runtime token granted particular connections cannot exe
 refused with `409 oauth_token_expired` and never refreshed on the caller's behalf: the host refreshes
 it through `POST /v1/credentials/refresh` with `{ "service": "...", "credential": {...} }`, which
 answers the refreshed credential (nothing stored), and retries. The provider's OAuth client secrets
-stay in this runtime's client configuration: a credential may carry its client without them, and a
-refresh or revocation puts them back when the configured client is the one the credential was minted
-under. A refresh the provider refused answers `400 oauth_token_refresh_failed` (reconnect);
+stay in this runtime's client configuration: an exported credential carries its client without them,
+and a refresh or revocation puts them back when the configured client is the one the credential was
+minted under. A refresh the provider refused answers `400 oauth_token_refresh_failed` (reconnect);
 one the provider did not answer — no response, a timeout, a 5xx — answers `502 provider_error`
 (retry later). `POST /v1/credentials/revoke` takes the same body and answers `revoked`: `done`,
 `failed` or `unsupported`. A credential whose embedded client is not the configured one and
@@ -512,7 +513,10 @@ These endpoints power the Web Console, examples, and setup scripts:
   declares a `revocationUrl` has its token posted there (RFC 7009) once the delete has gone through, best
   effort; the answer's `revoked` says `done`, `failed` (the provider refused or could not be reached; the
   credential is deleted all the same), `unsupported` (no `revocationUrl` declared, no OAuth token held, or a
-  SaaS connection) or `skipped` (the body did not ask).
+  SaaS connection) or `skipped` (the body did not ask). With `revision` in the body (the one
+  `GET /v1/connections/by-id/:appId/export` answered, beside the exported connection's `connectionName`),
+  the delete happens only while that row still carries the revision; a row that changed, or is already
+  gone, answers `409 connection_changed` and nothing is deleted.
   Revocation may also invalidate related connections. For Google, it removes the user's granted scopes
   for the project and invalidates tokens for all OAuth clients registered under that project; it is not
   limited to the selected connection or client. See [Google's token revocation documentation](https://developers.google.com/identity/protocols/oauth2/web-server#tokenrevoke).

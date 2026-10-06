@@ -114,6 +114,11 @@ export interface DisconnectOptions {
    * grant at the provider, where revoking would end the one that stays.
    */
   revoke?: boolean;
+  /**
+   * Delete only while the stored row still carries this revision (the one an
+   * export answered), else fail with `connection_changed` and keep the row.
+   */
+  revision?: string;
 }
 
 export interface DisconnectedConnectionSummary {
@@ -150,6 +155,15 @@ interface ExternalExecutionConnection {
 /** The connection name an externally managed credential executes under; no stored connection can carry it. */
 export const externalConnectionName = "external";
 
+/** What a host that manages credentials outside the runtime receives for one stored connection. */
+export interface ExportedConnection {
+  connection: ManagedConnectionSummary;
+  /** The stored credential with the OAuth client secrets removed; see {@link stripClientSecrets}. */
+  credential: Exclude<ResolvedCredential, { authType: "no_auth" }>;
+  /** The stored row's revision, for a delete that must not race a later write. */
+  revision: string;
+}
+
 interface MarketplaceExecutionConnection {
   kind: "marketplace";
   summary: ConnectionSummary;
@@ -168,7 +182,12 @@ export interface IConnectionStore {
   get(service: string, connectionName: string): Promise<StoredConnection | undefined>;
   set(service: string, connectionName: string, credential: ResolvedCredential): Promise<StoredLocalConnection>;
   updateCredential(input: StoredLocalConnection, refresh?: boolean): Promise<boolean>;
-  delete(service: string, connectionName: string): Promise<void>;
+  /**
+   * Delete the connection. With `expectedRevision`, delete it only while the row still carries that
+   * revision and throw `connection_changed` otherwise, so a caller that moved the credential
+   * elsewhere never deletes a credential written after its read.
+   */
+  delete(service: string, connectionName: string, expectedRevision?: string): Promise<void>;
   list(): Promise<StoredConnection[]>;
 }
 
@@ -438,6 +457,27 @@ export class ConnectionService {
     }
   }
 
+  /**
+   * Hand a stored connection's credential to a host that manages credentials
+   * outside the runtime, without the OAuth client secrets the runtime keeps for
+   * itself. A SaaS connection holds no credential here and is refused.
+   */
+  async exportConnection(id: string): Promise<ExportedConnection> {
+    const stored = await this.getStoredConnection(id);
+    if (stored.source === "saas") {
+      throw new ConnectionError("unsupported_auth_type", "SaaS credentials are not available locally.");
+    }
+    if (stored.credential.authType === "no_auth") {
+      throw new ConnectionError("unsupported_auth_type", "A no-auth connection holds no credential to export.");
+    }
+    this.logger?.info({ service: stored.service, connectionId: stored.id }, "connection credential exported");
+    return {
+      connection: this.createManagedConnectionSummary(stored),
+      credential: stripClientSecrets(stored.credential),
+      revision: stored.revision,
+    };
+  }
+
   async getCredential(service: string, connectionName?: string): Promise<ResolvedCredential | undefined> {
     const provider = this.getProvider(service);
     const name = normalizeConnectionName(connectionName);
@@ -697,7 +737,7 @@ export class ConnectionService {
         this.logger?.warn({ service, connectionName, error: describeError(error) }, "oauth token revocation skipped");
       }
     }
-    await this.store.delete(service, connectionName);
+    await this.store.delete(service, connectionName, options.revision);
     const revoked =
       options.revoke !== true
         ? "skipped"
@@ -1159,8 +1199,8 @@ function isOAuthCredentialExpired(credential: Extract<ResolvedCredential, { auth
  * The credential without the OAuth client secrets a consent embedded in it: the
  * client secret and the secret extra fields of `metadata.oauthClientConfig`, and
  * `metadata.oauthClientSecretExtra`. They belong to the runtime's OAuth client
- * configuration, which stays here; a refresh or revocation of the credential puts
- * them back from it.
+ * configuration, which stays here; a refresh or revocation of the exported
+ * credential puts them back from it.
  */
 export function stripClientSecrets(
   credential: Exclude<ResolvedCredential, { authType: "no_auth" }>,

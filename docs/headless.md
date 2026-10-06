@@ -82,6 +82,7 @@ original request URL when you forward.
 | `network`             | Private-network and trusted-host egress policy. Process-wide.                                                                                                |
 | `apiReference`        | Serve `/docs` API-reference HTML. Off by default. Authorization completion pages are always on.                                                              |
 | `externalCredentials` | Accept a `credential` in `/v1` action and proxy bodies and serve `/v1/credentials/*`, for a host that keeps credentials outside the runtime. Off by default. |
+| `credentialExport`    | Serve `GET /v1/connections/by-id/:appId/export`, which hands a stored credential (without the OAuth client secrets) to the administrator. Off by default.    |
 | `logger`              | `{ error, info, warn }`. Omit for silence.                                                                                                                   |
 
 `connector.fetch(request)` is the HTTP boundary: `/v1/*`, `/mcp`,

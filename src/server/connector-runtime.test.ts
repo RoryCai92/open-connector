@@ -541,14 +541,15 @@ describe("externally managed credentials", () => {
       "runtime-token",
     );
     expect(refresh.status).toBe(404);
+    expect((await request("/v1/connections/by-id/some-id/export")).status).toBe(404);
   });
 
   it("executes with the credential it was handed, stores nothing, and refreshes it on request", async () => {
     const options = await fixture();
     const { bodies } = stubGitHub();
-    runtime = await createConnectorRuntime({ ...options, externalCredentials: true });
+    runtime = await createConnectorRuntime({ ...options, externalCredentials: true, credentialExport: true });
     const health = await (await request("/v1/health", undefined, "runtime-token")).json();
-    expect(health.data.capabilities).toEqual(["external_credential"]);
+    expect(health.data.capabilities).toEqual(["external_credential", "credential_export"]);
 
     const executed = await runAction({ input: {}, credential: externalCredential });
     expect(executed.status).toBe(200);
@@ -729,6 +730,48 @@ describe("externally managed credentials", () => {
     );
     expect(keyed.status).toBe(403);
     expect((await keyed.json()).errorCode).toBe("connection_not_allowed");
+  });
+
+  it("exports a stored credential and deletes the row only at the revision it answered", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => Response.json({ id: 1, login: "fixture-account", name: "Fixture Account" })),
+    );
+    runtime = await createConnectorRuntime({ ...(await fixture()), credentialExport: true });
+    const saved = await request("/v1/connections/github/connect/api-key", { apiKey: "fixture-provider-secret" });
+    expect(saved.status).toBe(200);
+    const connection = (await saved.json()).data;
+
+    expect((await request(`/v1/connections/by-id/${connection.id}/export`, undefined, "runtime-token")).status).toBe(
+      401,
+    );
+    const exported = await request(`/v1/connections/by-id/${connection.id}/export`);
+    expect(exported.status).toBe(200);
+    const { data } = await exported.json();
+    expect(data).toMatchObject({
+      connection: { id: connection.id, service: "github", alias: connection.alias },
+      credential: { authType: "api_key", apiKey: "fixture-provider-secret" },
+      revision: expect.any(String),
+    });
+
+    const stale = await request(
+      "/api/connections/github",
+      { connectionName: connection.alias, revision: "another-revision" },
+      "admin-token",
+      "DELETE",
+    );
+    expect(stale.status).toBe(409);
+    expect((await stale.json()).error.code).toBe("connection_changed");
+    expect((await (await request("/v1/connections")).json()).data).toHaveLength(1);
+
+    const deleted = await request(
+      "/api/connections/github",
+      { connectionName: connection.alias, revision: data.revision },
+      "admin-token",
+      "DELETE",
+    );
+    expect(deleted.status).toBe(200);
+    expect((await (await request("/v1/connections")).json()).data).toEqual([]);
   });
 });
 

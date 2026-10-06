@@ -161,6 +161,8 @@ export interface IConnectServerOptions {
   saasOAuth?: SaasOAuthService;
   /** Accept a credential in the body of `/v1` action and proxy requests, and serve `/v1/credentials/*`. Off by default. */
   externalCredentials?: boolean;
+  /** Serve `GET /v1/connections/by-id/:appId/export`. Off by default. */
+  credentialExport?: boolean;
 }
 
 /** A credential a `/v1` request carries instead of naming a stored connection. */
@@ -1275,7 +1277,10 @@ export class ConnectServer {
     this.options.logger?.info(logContext, "connection disconnect started");
     return this.writeConnectionResult(
       context,
-      this.options.connections.disconnect(service, connectionName, { revoke: optionalBoolean(body.revoke) }),
+      this.options.connections.disconnect(service, connectionName, {
+        revoke: optionalBoolean(body.revoke),
+        revision: optionalString(body.revision),
+      }),
       logContext,
     );
   }
@@ -1284,6 +1289,7 @@ export class ConnectServer {
   private runtimeCapabilities(): string[] {
     const capabilities: string[] = [];
     if (this.options.externalCredentials) capabilities.push("external_credential");
+    if (this.options.credentialExport) capabilities.push("credential_export");
     return capabilities;
   }
 

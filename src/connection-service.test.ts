@@ -1510,6 +1510,28 @@ describe("ConnectionService external credentials", () => {
     ).toThrow(expect.objectContaining({ code: "unsupported_auth_type" }));
   });
 
+  it("exports a stored credential without the OAuth client secrets, at the stored revision", async () => {
+    const store = new MemoryConnectionStore();
+    const stored = await store.set("example", "default", carried);
+    const exported = await createService([oauthProvider], { store }).exportConnection(stored.id);
+
+    expect(exported.revision).toBe(stored.revision);
+    expect(exported.connection).toMatchObject({ id: stored.id, service: "example", status: "active" });
+    expect(exported.credential).toMatchObject({
+      accessToken: "external-access-token",
+      refreshToken: "external-refresh-token",
+      metadata: { oauthClientConfig: { clientId: "client-id" }, oauthClientExtra: { customerId: "customer-1" } },
+    });
+    const serialized = JSON.stringify(exported);
+    expect(serialized).not.toContain("client-secret-value");
+    expect(serialized).not.toContain("developer-token-value");
+    expect(exported.credential.metadata.oauthClientSecretExtra).toBeUndefined();
+    // The stored credential keeps its secrets; only the export is stripped.
+    await expect(store.get("example", "default")).resolves.toMatchObject({
+      credential: { metadata: { oauthClientSecretExtra: { developerToken: "developer-token-value" } } },
+    });
+  });
+
   it("refuses to refresh a carried credential without a refresh token or a refresher, else hands the refresher the transient code", async () => {
     await expect(
       createService([oauthProvider]).refreshCredential("example", { ...carried, refreshToken: undefined }),
@@ -1529,6 +1551,14 @@ describe("ConnectionService external credentials", () => {
       accessToken: "refreshed-access-token",
     });
     expect(refresh).toHaveBeenCalledWith("example", carried, { transientErrorCode: "provider_error" });
+  });
+
+  it("holds a disconnect to the revision the caller read", async () => {
+    const store = new MemoryConnectionStore();
+    await store.set("example", "default", carried);
+    const remove = vi.spyOn(store, "delete");
+    await createService([oauthProvider], { store }).disconnect("example", "default", { revision: "revision-1" });
+    expect(remove).toHaveBeenCalledWith("example", "default", "revision-1");
   });
 });
 
