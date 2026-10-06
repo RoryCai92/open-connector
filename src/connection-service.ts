@@ -360,8 +360,9 @@ export class ConnectionService {
    * Execute with a credential the caller holds instead of a stored connection. The
    * provider must support the credential's auth type, and an OAuth token that is
    * expired or about to expire is refused with `oauth_token_expired` rather than
-   * refreshed: the caller owns the credential and refreshes it, so the runtime never
-   * holds a token it did not get with the request.
+   * refreshed: the caller owns the credential and refreshes it through
+   * {@link refreshCredential}, so the runtime never holds a token it did not get
+   * with the request.
    */
   resolveExternalCredential(
     service: string,
@@ -382,6 +383,59 @@ export class ConnectionService {
       summary: this.createStoredConnectionSummary(provider, externalConnectionName, externalConnectionName, credential),
       getCredential: async (requestedService) => (requestedService === service ? credential : undefined),
     };
+  }
+
+  /**
+   * Refresh an OAuth credential the caller holds and answer the refreshed one;
+   * nothing is stored. The provider's client secrets stay in this runtime's
+   * client configuration and are used for the request when the credential's
+   * embedded client is the configured one (see the refresher).
+   */
+  async refreshCredential(service: string, credential: OAuthCredential): Promise<OAuthCredential> {
+    const provider = this.getProvider(service);
+    if (!this.supportsAuth(provider, "oauth2")) {
+      throw new ConnectionError("unsupported_auth_type", `${service} does not support oauth2.`);
+    }
+    if (!credential.refreshToken) {
+      throw new ConnectionError(
+        "oauth_token_expired",
+        `${service} OAuth credential has no refresh token. Reconnect ${service}.`,
+      );
+    }
+    if (!this.oauthCredentials) {
+      throw new ConnectionError(
+        "oauth_refresh_unavailable",
+        `${service} OAuth credentials cannot be refreshed by this runtime.`,
+      );
+    }
+    return this.oauthCredentials.refresh(service, credential, { transientErrorCode: "provider_error" });
+  }
+
+  /**
+   * Revoke an OAuth credential the caller holds at the provider; best effort, like
+   * a disconnect: `failed` when the provider refused or could not be reached.
+   */
+  async revokeCredential(service: string, credential: OAuthCredential): Promise<OAuthRevocationOutcome> {
+    this.getProvider(service);
+    const refresher = this.oauthCredentials;
+    if (!refresher?.revoke) {
+      return "unsupported";
+    }
+    try {
+      const outcome = await refresher.revoke(service, credential);
+      this.logger?.info({ service, revoked: outcome }, "oauth token revocation completed");
+      return outcome;
+    } catch (error) {
+      this.logger?.warn(
+        {
+          service,
+          errorCode: error instanceof ConnectionError ? error.code : "oauth_token_revocation_failed",
+          error: describeError(error),
+        },
+        "oauth token revocation failed",
+      );
+      return "failed";
+    }
   }
 
   async getCredential(service: string, connectionName?: string): Promise<ResolvedCredential | undefined> {
@@ -1099,6 +1153,30 @@ function isOAuthCredentialExpired(credential: Extract<ResolvedCredential, { auth
 
   const expiresAt = Date.parse(credential.expiresAt);
   return Number.isFinite(expiresAt) && expiresAt <= Date.now() + 60_000;
+}
+
+/**
+ * The credential without the OAuth client secrets a consent embedded in it: the
+ * client secret and the secret extra fields of `metadata.oauthClientConfig`, and
+ * `metadata.oauthClientSecretExtra`. They belong to the runtime's OAuth client
+ * configuration, which stays here; a refresh or revocation of the credential puts
+ * them back from it.
+ */
+export function stripClientSecrets(
+  credential: Exclude<ResolvedCredential, { authType: "no_auth" }>,
+): Exclude<ResolvedCredential, { authType: "no_auth" }> {
+  if (credential.authType !== "oauth2") return credential;
+  const { oauthClientSecretExtra: _secretExtra, ...metadata } = credential.metadata;
+  const embedded = metadata.oauthClientConfig;
+  if (embedded && typeof embedded === "object" && !Array.isArray(embedded)) {
+    const {
+      clientSecret: _clientSecret,
+      secretExtra: _embeddedSecretExtra,
+      ...config
+    } = embedded as Record<string, unknown>;
+    metadata.oauthClientConfig = config;
+  }
+  return { ...credential, metadata };
 }
 
 export function normalizeConnectionName(value: string | undefined): string {

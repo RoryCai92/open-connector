@@ -1509,6 +1509,27 @@ describe("ConnectionService external credentials", () => {
       }),
     ).toThrow(expect.objectContaining({ code: "unsupported_auth_type" }));
   });
+
+  it("refuses to refresh a carried credential without a refresh token or a refresher, else hands the refresher the transient code", async () => {
+    await expect(
+      createService([oauthProvider]).refreshCredential("example", { ...carried, refreshToken: undefined }),
+    ).rejects.toMatchObject({ code: "oauth_token_expired" });
+    await expect(createService([oauthProvider]).refreshCredential("example", carried)).rejects.toMatchObject({
+      code: "oauth_refresh_unavailable",
+    });
+
+    const refresh = vi.fn(async (_service: string, credential: typeof carried) => ({
+      ...credential,
+      accessToken: "refreshed-access-token",
+    }));
+    const service = createService([oauthProvider], {
+      oauthCredentials: { refresh } as unknown as OAuthCredentialRefreshService,
+    });
+    await expect(service.refreshCredential("example", carried)).resolves.toMatchObject({
+      accessToken: "refreshed-access-token",
+    });
+    expect(refresh).toHaveBeenCalledWith("example", carried, { transientErrorCode: "provider_error" });
+  });
 });
 
 interface CreateServiceOptions {

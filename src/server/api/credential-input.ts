@@ -3,6 +3,7 @@ import type { ResolvedCredential } from "../../core/types.ts";
 import { z } from "zod";
 
 type ExternalCredential = Exclude<ResolvedCredential, { authType: "no_auth" }>;
+type ExternalOAuthCredential = Extract<ResolvedCredential, { authType: "oauth2" }>;
 
 const profile = z.object({
   accountId: z.string().min(1),
@@ -43,3 +44,10 @@ export const externalCredentialInput: z.ZodType<ExternalCredential> = z.discrimi
     metadata,
   }),
 ]);
+
+/** The body of `POST /v1/credentials/refresh` and `/v1/credentials/revoke`. */
+export const credentialRequestInput: z.ZodType<{ service: string; credential: ExternalOAuthCredential }> =
+  z.strictObject({
+    service: z.string().trim().min(1),
+    credential: oauthCredential,
+  });

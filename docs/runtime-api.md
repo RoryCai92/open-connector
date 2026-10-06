@@ -345,8 +345,16 @@ The credential comes alone: a request that also names a connection (`alias`, `co
 credentials refuses one with `external_credentials_disabled` rather than falling back to a stored
 connection. A persistent runtime token granted particular connections cannot execute with one
 (`connection_not_allowed`). An OAuth credential that is expired or within a minute of expiring is
-refused with `409 oauth_token_expired` and never refreshed on the caller's behalf: the host that
-holds it refreshes it and retries. With an `Idempotency-Key`, the carried credential's service,
+refused with `409 oauth_token_expired` and never refreshed on the caller's behalf: the host refreshes
+it through `POST /v1/credentials/refresh` with `{ "service": "...", "credential": {...} }`, which
+answers the refreshed credential (nothing stored), and retries. The provider's OAuth client secrets
+stay in this runtime's client configuration: a credential may carry its client without them, and a
+refresh or revocation puts them back when the configured client is the one the credential was minted
+under. A refresh the provider refused answers `400 oauth_token_refresh_failed` (reconnect);
+one the provider did not answer — no response, a timeout, a 5xx — answers `502 provider_error`
+(retry later). `POST /v1/credentials/revoke` takes the same body and answers `revoked`: `done`,
+`failed` or `unsupported`. A credential whose embedded client is not the configured one and
+carries no secret cannot be refreshed here and answers `400 oauth_client_config_required`. With an `Idempotency-Key`, the carried credential's service,
 provider account and a digest of its refresh token (its key, for an API key) stand for the
 connection in the request fingerprint: a retry with a refreshed access token of the same grant
 replays, another account or another grant conflicts — so a caller that knows only an account id
@@ -440,6 +448,8 @@ by age.
 - `GET /v1/apps/services/:service`
 - `GET /v1/apps/authenticated`
 - `POST /v1/proxy/:service`
+- `POST /v1/credentials/refresh` and `POST /v1/credentials/revoke` — only on a runtime that accepts
+  externally managed credentials (below)
 
 `GET /v1/apps/authenticated` checks the repeated `service` query values and returns the authenticated
 service IDs from that candidate set. It returns an empty list when no candidates are supplied.

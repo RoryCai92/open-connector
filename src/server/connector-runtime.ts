@@ -101,9 +101,9 @@ export interface ConnectorRuntimeOptions {
   /** The standalone host opts into API-reference HTML. Authorization completion pages are always available. */
   apiReference?: boolean;
   /**
-   * Accept a credential in the body of `/v1` action and proxy requests, for a host that keeps
-   * credentials outside the runtime. The runtime executes with such a credential and stores nothing.
-   * Off by default.
+   * Accept a credential in the body of `/v1` action and proxy requests and serve `/v1/credentials/refresh`
+   * and `/v1/credentials/revoke`, for a host that keeps credentials outside the runtime. The runtime
+   * executes with such a credential and stores nothing. Off by default.
    */
   externalCredentials?: boolean;
 }

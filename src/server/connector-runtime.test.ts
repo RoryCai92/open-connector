@@ -499,22 +499,33 @@ describe("externally managed credentials", () => {
     metadata: { oauthClientConfig: { clientId: "github-client-id" } },
   };
 
-  /** GitHub's user endpoint answers with the bearer it was shown. */
-  function stubGitHub(): void {
+  /** GitHub's user endpoint answers with the bearer it was shown; its token endpoint refreshes. */
+  function stubGitHub(): { bodies: Record<string, string> } {
+    const bodies: Record<string, string> = {};
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = String(input instanceof Request ? input.url : input);
         const headers = new Headers(input instanceof Request ? input.headers : init?.headers);
+        bodies[url] = input instanceof Request ? await input.clone().text() : String(init?.body ?? "");
         if (url.startsWith("https://api.github.com/user")) {
           // Name the token's owner without echoing the token into the action output.
           const bearer = headers.get("authorization")?.split(" ")[1];
           const login = bearer === "external-access-token" ? "external-user" : "another-user";
           return Response.json({ id: 1, login, name: "Fixture Account" });
         }
+        if (url === "https://github.com/login/oauth/access_token") {
+          return Response.json({
+            access_token: "refreshed-access-token",
+            token_type: "bearer",
+            expires_in: 3600,
+            refresh_token: "refreshed-refresh-token",
+          });
+        }
         throw new Error(`unexpected fetch ${url}`);
       }),
     );
+    return { bodies };
   }
 
   it("refuses a credential in the request unless the runtime was created for it", async () => {
@@ -524,11 +535,17 @@ describe("externally managed credentials", () => {
     const refused = await runAction({ input: {}, credential: externalCredential });
     expect(refused.status).toBe(400);
     expect((await refused.json()).errorCode).toBe("external_credentials_disabled");
+    const refresh = await request(
+      "/v1/credentials/refresh",
+      { service: "github", credential: externalCredential },
+      "runtime-token",
+    );
+    expect(refresh.status).toBe(404);
   });
 
-  it("executes with the credential it was handed and stores nothing", async () => {
+  it("executes with the credential it was handed, stores nothing, and refreshes it on request", async () => {
     const options = await fixture();
-    stubGitHub();
+    const { bodies } = stubGitHub();
     runtime = await createConnectorRuntime({ ...options, externalCredentials: true });
     const health = await (await request("/v1/health", undefined, "runtime-token")).json();
     expect(health.data.capabilities).toEqual(["external_credential"]);
@@ -555,12 +572,86 @@ describe("externally managed credentials", () => {
     expect(expired.status).toBe(409);
     expect((await expired.json()).errorCode).toBe("oauth_token_expired");
 
+    // The refresh borrows the configured client's secret for the credential's client id.
+    const configured = await request(
+      "/api/oauth/configs/github",
+      { clientId: "github-client-id", clientSecret: "github-client-secret" },
+      "admin-token",
+      "PUT",
+    );
+    expect(configured.status).toBe(200);
+    const refreshed = await request(
+      "/v1/credentials/refresh",
+      { service: "github", credential: externalCredential },
+      "runtime-token",
+    );
+    expect(refreshed.status).toBe(200);
+    const refreshedBody = await refreshed.json();
+    expect(refreshedBody.data.credential).toMatchObject({
+      accessToken: "refreshed-access-token",
+      refreshToken: "refreshed-refresh-token",
+      profile: { accountId: "external-account" },
+      metadata: { oauthClientConfig: { clientId: "github-client-id" } },
+    });
+    expect(JSON.stringify(refreshedBody)).not.toContain("github-client-secret");
+    expect(bodies["https://github.com/login/oauth/access_token"]).toContain("client_secret=github-client-secret");
+    expect(bodies["https://github.com/login/oauth/access_token"]).toContain("refresh_token=external-refresh-token");
+
+    // GitHub declares no revocation endpoint.
+    const revoked = await request(
+      "/v1/credentials/revoke",
+      { service: "github", credential: externalCredential },
+      "runtime-token",
+    );
+    expect(revoked.status).toBe(200);
+    expect((await revoked.json()).data).toEqual({ revoked: "unsupported" });
+
     // The runtime kept no byte of any token.
     await runtime.close();
     const database = await readFile(join(options.dataDir, "connect.sqlite"));
-    for (const secret of ["external-access-token", "external-refresh-token"]) {
+    for (const secret of ["external-access-token", "external-refresh-token", "refreshed-access-token"]) {
       expect(database.includes(Buffer.from(secret))).toBe(false);
     }
+  });
+
+  it("tells a refresh the provider refused from one it did not answer", async () => {
+    const options = await fixture();
+    let answer: () => Response = () => Response.json({ error: "invalid_grant" }, { status: 400 });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => answer()),
+    );
+    runtime = await createConnectorRuntime({ ...options, externalCredentials: true });
+    await request(
+      "/api/oauth/configs/github",
+      { clientId: "github-client-id", clientSecret: "github-client-secret" },
+      "admin-token",
+      "PUT",
+    );
+    const body = { service: "github", credential: externalCredential };
+    const refused = await request("/v1/credentials/refresh", body, "runtime-token");
+    expect(refused.status).toBe(400);
+    expect((await refused.json()).errorCode).toBe("oauth_token_refresh_failed");
+
+    answer = () => new Response("", { status: 503 });
+    const unanswered = await request("/v1/credentials/refresh", body, "runtime-token");
+    expect(unanswered.status).toBe(502);
+    expect((await unanswered.json()).errorCode).toBe("provider_error");
+
+    answer = () => {
+      throw new TypeError("fetch failed");
+    };
+    const unreachable = await request("/v1/credentials/refresh", body, "runtime-token");
+    expect(unreachable.status).toBe(502);
+    expect((await unreachable.json()).errorCode).toBe("provider_error");
+
+    const noRefreshToken = await request(
+      "/v1/credentials/refresh",
+      { service: "github", credential: { ...externalCredential, refreshToken: undefined } },
+      "runtime-token",
+    );
+    expect(noRefreshToken.status).toBe(409);
+    expect((await noRefreshToken.json()).errorCode).toBe("oauth_token_expired");
   });
 
   it("keys an idempotent retry on the grant, never completes a key for a refused request, and refuses a token granted particular connections", async () => {

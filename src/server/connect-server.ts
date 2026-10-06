@@ -23,7 +23,12 @@ import type { Context, MiddlewareHandler } from "hono";
 
 import { Hono } from "hono";
 import { compress } from "hono/compress";
-import { ConnectionError, defaultConnectionName, externalConnectionName } from "../connection-service.ts";
+import {
+  ConnectionError,
+  defaultConnectionName,
+  externalConnectionName,
+  stripClientSecrets,
+} from "../connection-service.ts";
 import { ActionPolicyService, emptyPolicyRules } from "../core/action-policy.ts";
 import { DEFAULT_ACTION_SEARCH_LIMIT, createActionSearchIndexProvider, searchActions } from "../core/action-search.ts";
 import {
@@ -154,7 +159,7 @@ export interface IConnectServerOptions {
   saasProject?: SaasProjectService;
   saas?: SaasExecutionService;
   saasOAuth?: SaasOAuthService;
-  /** Accept a credential in the body of `/v1` action and proxy requests. Off by default. */
+  /** Accept a credential in the body of `/v1` action and proxy requests, and serve `/v1/credentials/*`. Off by default. */
   externalCredentials?: boolean;
 }
 
@@ -270,6 +275,10 @@ export class ConnectServer {
       this.listRuntimeAppsByService(context, context.req.param("service")),
     );
     app.post("/v1/proxy/:service", (context) => this.createRuntimeProxyRequest(context, context.req.param("service")));
+    if (this.options.externalCredentials) {
+      app.post("/v1/credentials/refresh", (context) => this.refreshExternalCredential(context));
+      app.post("/v1/credentials/revoke", (context) => this.revokeExternalCredential(context));
+    }
 
     app.get("/openapi.json", async (context) => {
       const { createOpenApiDocument } = await import("./api/openapi.ts");
@@ -1309,6 +1318,64 @@ export class ConnectServer {
       );
     }
     return { ok: true, credential: parsed.data };
+  }
+
+  /** `POST /v1/credentials/refresh`: refresh an OAuth credential the caller holds; nothing is stored. */
+  private async refreshExternalCredential(context: Context): Promise<Response> {
+    const { credentialRequestInput } = await import("./api/credential-input.ts");
+    const parsed = credentialRequestInput.safeParse(await readJsonBody(context));
+    if (!parsed.success) {
+      return writeRuntimeFailure(context, {
+        status: 400,
+        errorCode: "invalid_input",
+        message: parsed.error.issues.map((issue) => `${issue.path.join(".")}: ${issue.message}`).join("; "),
+      });
+    }
+    const { service, credential } = parsed.data;
+    try {
+      const refreshed = await this.options.connections.refreshCredential(service, credential);
+      return writeRuntimeSuccess(context, { credential: stripClientSecrets(refreshed) });
+    } catch (error) {
+      if (error instanceof ConnectionError) {
+        return writeRuntimeFailure(context, {
+          // A provider that did not answer is the one failure the caller should retry later.
+          status: error.code === "provider_error" ? 502 : mapConnectionErrorStatus(error),
+          errorCode: error.code,
+          message: error.message,
+          meta: { service },
+        });
+      }
+      throw error;
+    }
+  }
+
+  /** `POST /v1/credentials/revoke`: end an OAuth credential the caller holds at the provider, best effort. */
+  private async revokeExternalCredential(context: Context): Promise<Response> {
+    const { credentialRequestInput } = await import("./api/credential-input.ts");
+    const parsed = credentialRequestInput.safeParse(await readJsonBody(context));
+    if (!parsed.success) {
+      return writeRuntimeFailure(context, {
+        status: 400,
+        errorCode: "invalid_input",
+        message: parsed.error.issues.map((issue) => `${issue.path.join(".")}: ${issue.message}`).join("; "),
+      });
+    }
+    const { service, credential } = parsed.data;
+    try {
+      return writeRuntimeSuccess(context, {
+        revoked: await this.options.connections.revokeCredential(service, credential),
+      });
+    } catch (error) {
+      if (error instanceof ConnectionError) {
+        return writeRuntimeFailure(context, {
+          status: mapConnectionErrorStatus(error),
+          errorCode: error.code,
+          message: error.message,
+          meta: { service },
+        });
+      }
+      throw error;
+    }
   }
 
   private async createOAuthAuthorization(context: Context): Promise<Response> {

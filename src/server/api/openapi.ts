@@ -247,7 +247,7 @@ export function createOpenApiDocument(
           runtime: jsonSchema.string({ description: "Runtime identifier." }),
           capabilities: jsonSchema.array(jsonSchema.string(), {
             description:
-              "Optional abilities of this runtime: external_credential (a credential may ride in the body of action and proxy requests).",
+              "Optional abilities of this runtime: external_credential (a credential may ride in the body of action and proxy requests, and /v1/credentials/refresh and /v1/credentials/revoke are served).",
           }),
         },
         { required: ["ok", "runtime", "capabilities"], description: "Runtime health payload." },
@@ -380,6 +380,7 @@ export function createOpenApiDocument(
     "/api/files/{fileId}": createTransitFilePath(),
     "/v1/actions/{actionId}": runPath,
     "/v1/proxy/{service}": createProxyPath(),
+    ...createCredentialPaths(),
     "/v1/providers/{service}/trigger-permissions": runtimeGetOperation(
       "Triggers",
       "Read provider-native Trigger permission guidance.",
@@ -1335,6 +1336,79 @@ function createRunPath(): Record<string, unknown> {
         "Generic action run creation request.",
       ),
       responses: actionRunResponses(jsonSchema.unknown("Action output matching the catalog schema.")),
+    },
+  };
+}
+
+/** `POST /v1/credentials/refresh` and `/revoke`, served only by a runtime created with externalCredentials. */
+function createCredentialPaths(): Record<string, unknown> {
+  const requestBody = {
+    required: true,
+    content: {
+      "application/json": {
+        schema: jsonSchema.object(
+          {
+            service: jsonSchema.string({ description: "Provider service identifier." }),
+            credential: { $ref: "#/components/schemas/ExternalOAuthCredential" },
+          },
+          { required: ["service", "credential"], description: "An OAuth credential the caller holds." },
+        ),
+      },
+    },
+  };
+  const failure = runtimeFailureSchema();
+  return {
+    "/v1/credentials/refresh": {
+      post: {
+        tags: ["Connections"],
+        summary: "Refresh an OAuth credential the caller holds.",
+        description:
+          "Exchanges the credential's refresh token for a new access token and answers the refreshed credential; nothing is stored. The provider's client secrets come from this runtime's OAuth client configuration when the credential was minted under the configured client. oauth_token_refresh_failed means the provider refused the refresh token (reconnect); provider_error means it did not answer (retry later).",
+        requestBody,
+        responses: {
+          200: jsonResponse(
+            runtimeSuccessSchema(
+              jsonSchema.object(
+                { credential: { $ref: "#/components/schemas/ExternalOAuthCredential" } },
+                {
+                  required: ["credential"],
+                  description: "The refreshed credential, without the OAuth client secrets.",
+                },
+              ),
+            ),
+          ),
+          400: jsonResponse(failure, "invalid_input, oauth_token_refresh_failed or oauth_client_config_required."),
+          404: jsonResponse(failure, "unknown_service."),
+          409: jsonResponse(failure, "oauth_token_expired (no refresh token) or oauth_refresh_unavailable."),
+          502: jsonResponse(failure, "provider_error: the provider did not answer; retry later."),
+        },
+      },
+    },
+    "/v1/credentials/revoke": {
+      post: {
+        tags: ["Connections"],
+        summary: "Revoke an OAuth credential the caller holds at the provider.",
+        description:
+          "Posts the credential's refresh token (else its access token) to the provider's revocation endpoint, best effort; nothing is stored or deleted here.",
+        requestBody,
+        responses: {
+          200: jsonResponse(
+            runtimeSuccessSchema(
+              jsonSchema.object(
+                {
+                  revoked: jsonSchema.stringEnum(
+                    "done (the provider accepted the token), failed (it refused or could not be reached) or unsupported (no revocation endpoint declared, or no token to revoke).",
+                    ["done", "failed", "unsupported"],
+                  ),
+                },
+                { required: ["revoked"], description: "What became of the grant at the provider." },
+              ),
+            ),
+          ),
+          400: jsonResponse(failure, "invalid_input."),
+          404: jsonResponse(failure, "unknown_service."),
+        },
+      },
     },
   };
 }
