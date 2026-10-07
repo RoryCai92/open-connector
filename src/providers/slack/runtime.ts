@@ -160,6 +160,9 @@ export const slackActionHandlers: ProviderActionHandlers<"slack", SlackActionHan
   get_reactions(input, context) {
     return slackGetReactions(input, context);
   },
+  list_reactions(input, context) {
+    return slackListReactions(input, context);
+  },
   upload_file(input, context) {
     return slackUploadFile(input, context);
   },
@@ -722,6 +725,33 @@ async function slackGetReactions(input: Record<string, unknown>, context: SlackA
 
   return {
     item: payload.message ?? {},
+  };
+}
+
+async function slackListReactions(input: Record<string, unknown>, context: SlackActionContext): Promise<unknown> {
+  const url = slackApiUrl("reactions.list");
+  url.searchParams.set("limit", String(input.limit ?? 100));
+  if (input.userId != null) {
+    url.searchParams.set("user", String(input.userId));
+  }
+  if (input.cursor != null) {
+    url.searchParams.set("cursor", String(input.cursor));
+  }
+  if (typeof input.full === "boolean") {
+    url.searchParams.set("full", String(input.full));
+  }
+
+  const payload = await slackGetJson<SlackPayloadError & { items?: unknown }>(url, context);
+
+  return {
+    items: requireSlackArray(payload.items, "reactions.list items").map((item) => {
+      const record = optionalRecord(item);
+      if (!record) {
+        throw slackResponseError("reactions.list item");
+      }
+      return normalizeSlackReactionItem(record);
+    }),
+    nextCursor: normalizeNextCursor(readSlackNextCursor(payload, "reactions.list")),
   };
 }
 
@@ -1313,6 +1343,29 @@ function normalizeSlackReaction(reaction: Record<string, unknown>): Record<strin
     name: optionalString(reaction.name),
     count: optionalInteger(reaction.count),
     userIds: Array.isArray(reaction.users) ? reaction.users.map((user) => String(user)) : undefined,
+  });
+}
+
+/**
+ * Normalize one `reactions.list` item. A message item keeps its conversation,
+ * its permalink and the message as `normalizeSlackMessage` reads it, so the
+ * reactions ride on the message as they do on a history row. A file or file
+ * comment item keeps the file ID and the reactions Slack reports on the file
+ * or on the comment.
+ */
+function normalizeSlackReactionItem(item: Record<string, unknown>): Record<string, unknown> {
+  const message = optionalRecord(item.message);
+  const file = optionalRecord(item.file);
+  const target = message ? undefined : (optionalRecord(item.comment) ?? file);
+  const reactions = Array.isArray(target?.reactions) ? target.reactions : undefined;
+
+  return compactObject({
+    type: requiredString(item.type, "reactions.list item type", () => slackResponseError("reactions.list item type")),
+    channelId: optionalString(item.channel),
+    message: message ? normalizeSlackMessage(message) : undefined,
+    permalink: optionalString(message?.permalink),
+    fileId: optionalString(file?.id),
+    reactions: reactions?.map((reaction) => normalizeSlackReaction(optionalRecord(reaction) ?? {})),
   });
 }
 
