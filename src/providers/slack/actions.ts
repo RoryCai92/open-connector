@@ -144,6 +144,7 @@ const reactionListItemSchema = s.looseObject(
     message: slackMessageSchema,
     permalink: s.string({ description: "A Slack permalink for the message, when Slack returns one." }),
     fileId: s.string({ description: "The file ID, on a file or file comment item." }),
+    commentId: s.string({ description: "The file comment ID, on a file comment item." }),
     reactions: s.array(slackReactionSchema, {
       description: "Reaction summaries on a file or file comment item. A message item carries them on message.",
     }),

@@ -1349,14 +1349,15 @@ function normalizeSlackReaction(reaction: Record<string, unknown>): Record<strin
 /**
  * Normalize one `reactions.list` item. A message item keeps its conversation,
  * its permalink and the message as `normalizeSlackMessage` reads it, so the
- * reactions ride on the message as they do on a history row. A file or file
- * comment item keeps the file ID and the reactions Slack reports on the file
- * or on the comment.
+ * reactions ride on the message as they do on a history row. A file item
+ * keeps the file ID and the reactions on the file; a file comment item also
+ * keeps the comment ID, and the reactions are the comment's.
  */
 function normalizeSlackReactionItem(item: Record<string, unknown>): Record<string, unknown> {
   const message = optionalRecord(item.message);
   const file = optionalRecord(item.file);
-  const target = message ? undefined : (optionalRecord(item.comment) ?? file);
+  const comment = optionalRecord(item.comment);
+  const target = message ? undefined : (comment ?? file);
   const reactions = Array.isArray(target?.reactions) ? target.reactions : undefined;
 
   return compactObject({
@@ -1365,6 +1366,7 @@ function normalizeSlackReactionItem(item: Record<string, unknown>): Record<strin
     message: message ? normalizeSlackMessage(message) : undefined,
     permalink: optionalString(message?.permalink),
     fileId: optionalString(file?.id),
+    commentId: optionalString(comment?.id),
     reactions: reactions?.map((reaction) => normalizeSlackReaction(optionalRecord(reaction) ?? {})),
   });
 }

@@ -1373,7 +1373,12 @@ describe("Slack reactions list", () => {
             permalink: "https://example.slack.com/archives/C024BE91L/p1700000000000100",
           },
           { type: "file", fileId: "F0123456", reactions: [{ name: "eyes", count: 1, userIds: ["U0G9QF9C6"] }] },
-          { type: "file_comment", fileId: "F0123457", reactions: [{ name: "tada", count: 1, userIds: ["U0G9QF9C6"] }] },
+          {
+            type: "file_comment",
+            fileId: "F0123457",
+            commentId: "Fc0123",
+            reactions: [{ name: "tada", count: 1, userIds: ["U0G9QF9C6"] }],
+          },
         ],
         nextCursor: "dXNlcjpVMDYxTkZUVDM=",
       },
