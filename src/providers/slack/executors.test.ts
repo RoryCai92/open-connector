@@ -1341,7 +1341,7 @@ describe("Slack reactions list", () => {
           },
           {
             type: "file_comment",
-            file: { id: "F0123457" },
+            file: { id: "F0123457", reactions: [{ name: "eyes", users: ["U023BECGF"], count: 1 }] },
             comment: { id: "Fc0123", reactions: [{ name: "tada", users: ["U0G9QF9C6"], count: 1 }] },
           },
         ],
@@ -1420,6 +1420,67 @@ describe("Slack reactions list", () => {
       const result = await execute({}, context);
       expect(result).toMatchObject({ ok: false, error: { code: "provider_error", details: { status: 502 } } });
     }
+  });
+
+  it.each([
+    { name: "an unsupported item type", item: { type: "other" } },
+    { name: "a padded item type", item: { type: " message ", channel: "C123", message: { ts: "1700000000.000100" } } },
+    { name: "a message without a message object", item: { type: "message", channel: "C123" } },
+    { name: "a message with a null message", item: { type: "message", channel: "C123", message: null } },
+    { name: "a message with a string message", item: { type: "message", channel: "C123", message: "broken" } },
+    { name: "a message with an array message", item: { type: "message", channel: "C123", message: [] } },
+    { name: "a message without a channel", item: { type: "message", message: { ts: "1700000000.000100" } } },
+    {
+      name: "a message with an empty channel",
+      item: { type: "message", channel: "", message: { ts: "1700000000.000100" } },
+    },
+    {
+      name: "a message with a numeric channel",
+      item: { type: "message", channel: 7, message: { ts: "1700000000.000100" } },
+    },
+    { name: "a file without a file object", item: { type: "file" } },
+    { name: "a file with a null file", item: { type: "file", file: null } },
+    { name: "a file with a string file", item: { type: "file", file: "broken" } },
+    { name: "a file with an array file", item: { type: "file", file: [] } },
+    { name: "a file without an ID", item: { type: "file", file: {} } },
+    { name: "a file with a padded ID", item: { type: "file", file: { id: " F123 " } } },
+    { name: "a file comment without a file", item: { type: "file_comment", comment: { id: "Fc123" } } },
+    {
+      name: "a file comment without a comment despite file reactions",
+      item: { type: "file_comment", file: { id: "F123", reactions: [{ name: "eyes", users: ["U123"], count: 1 }] } },
+    },
+    { name: "a file comment with a null comment", item: { type: "file_comment", file: { id: "F123" }, comment: null } },
+    {
+      name: "a file comment with a string comment",
+      item: { type: "file_comment", file: { id: "F123" }, comment: "broken" },
+    },
+    { name: "a file comment with an array comment", item: { type: "file_comment", file: { id: "F123" }, comment: [] } },
+    { name: "a file comment without a file ID", item: { type: "file_comment", file: {}, comment: { id: "Fc123" } } },
+    { name: "a file comment without a comment ID", item: { type: "file_comment", file: { id: "F123" }, comment: {} } },
+  ])("rejects $name", async ({ item }) => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => Response.json({ ok: true, items: [item] })),
+    );
+
+    await expect(execute({}, context)).resolves.toMatchObject({
+      ok: false,
+      error: { code: "provider_error", details: { status: 502 } },
+    });
+  });
+
+  it.each([
+    { name: "an item without a type", item: {} },
+    { name: "an item with an unsupported type", item: { type: "other" } },
+    { name: "a message without a channel ID", item: { type: "message", message: { ts: "1700000000.000100" } } },
+    { name: "a message without a message", item: { type: "message", channelId: "C123" } },
+    { name: "a message without a timestamp", item: { type: "message", channelId: "C123", message: {} } },
+    { name: "a file without a file ID", item: { type: "file" } },
+    { name: "a file comment without a file ID", item: { type: "file_comment", commentId: "Fc123" } },
+    { name: "a file comment without a comment ID", item: { type: "file_comment", fileId: "F123" } },
+  ])("declares an output schema that rejects $name", ({ item }) => {
+    const action = slackActions.find((candidate) => candidate.id === "slack.list_reactions")!;
+    expect(new Validator(action.outputSchema).validate({ items: [item], nextCursor: null }).valid).toBe(false);
   });
 
   it("validates its input and is inherited by slackbot", () => {

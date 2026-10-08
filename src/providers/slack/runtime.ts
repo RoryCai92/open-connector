@@ -1354,19 +1354,30 @@ function normalizeSlackReaction(reaction: Record<string, unknown>): Record<strin
  * keeps the comment ID, and the reactions are the comment's.
  */
 function normalizeSlackReactionItem(item: Record<string, unknown>): Record<string, unknown> {
-  const message = optionalRecord(item.message);
-  const file = optionalRecord(item.file);
-  const comment = optionalRecord(item.comment);
-  const target = message ? undefined : (comment ?? file);
-  const reactions = Array.isArray(target?.reactions) ? target.reactions : undefined;
+  const type = requireSlackId(item.type, "reactions.list item type");
+  if (type === "message") {
+    const message = requiredResponseRecord(item.message, "reactions.list item message");
+    return compactObject({
+      type,
+      channelId: requireSlackId(item.channel, "reactions.list item channel"),
+      message: normalizeSlackMessage(message),
+      permalink: optionalString(message.permalink),
+    });
+  }
+  if (type !== "file" && type !== "file_comment") {
+    throw slackResponseError("reactions.list item type");
+  }
+
+  const file = requiredResponseRecord(item.file, "reactions.list item file");
+  const comment =
+    type === "file_comment" ? requiredResponseRecord(item.comment, "reactions.list item comment") : undefined;
+  const target = comment ?? file;
+  const reactions = Array.isArray(target.reactions) ? target.reactions : undefined;
 
   return compactObject({
-    type: requiredString(item.type, "reactions.list item type", () => slackResponseError("reactions.list item type")),
-    channelId: optionalString(item.channel),
-    message: message ? normalizeSlackMessage(message) : undefined,
-    permalink: optionalString(message?.permalink),
-    fileId: optionalString(file?.id),
-    commentId: optionalString(comment?.id),
+    type,
+    fileId: requireSlackId(file.id, "reactions.list item file id"),
+    commentId: comment ? requireSlackId(comment.id, "reactions.list item comment id") : undefined,
     reactions: reactions?.map((reaction) => normalizeSlackReaction(optionalRecord(reaction) ?? {})),
   });
 }

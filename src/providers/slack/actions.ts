@@ -137,20 +137,34 @@ const slackMessageSchema = s.looseObject(
 // One `reactions.list` item. A message item carries its conversation and the
 // message row above (reactions included); a file or file comment item carries
 // the file ID and the reactions on it.
-const reactionListItemSchema = s.looseObject(
-  {
-    type: s.string({ description: "The kind of item reacted to: 'message', 'file' or 'file_comment'." }),
-    channelId: s.string({ description: "The conversation containing the message, on a message item." }),
-    message: slackMessageSchema,
-    permalink: s.string({ description: "A Slack permalink for the message, when Slack returns one." }),
-    fileId: s.string({ description: "The file ID, on a file or file comment item." }),
-    commentId: s.string({ description: "The file comment ID, on a file comment item." }),
-    reactions: s.array(slackReactionSchema, {
-      description: "Reaction summaries on a file or file comment item. A message item carries them on message.",
-    }),
-  },
-  { description: "An item the user reacted to, with the reactions on it." },
-);
+const reactionListItemSchema: JsonSchema = {
+  ...s.object(
+    {
+      type: s.stringEnum(["message", "file", "file_comment"], { description: "The kind of item reacted to." }),
+      channelId: channelIdSchema,
+      message: {
+        ...slackMessageSchema,
+        required: ["ts"],
+      },
+      permalink: s.string({ description: "A Slack permalink for the message, when Slack returns one." }),
+      fileId: fileIdSchema,
+      commentId: s.nonEmptyString("The file comment ID, on a file comment item."),
+      reactions: s.array(slackReactionSchema, {
+        description: "Reaction summaries on a file or file comment item. A message item carries them on message.",
+      }),
+    },
+    {
+      required: ["type"],
+      additionalProperties: true,
+      description: "An item the user reacted to, with the reactions on it.",
+    },
+  ),
+  oneOf: [
+    { properties: { type: s.literal("message") }, required: ["channelId", "message"] },
+    { properties: { type: s.literal("file") }, required: ["fileId"] },
+    { properties: { type: s.literal("file_comment") }, required: ["fileId", "commentId"] },
+  ],
+};
 
 const searchMessageMatchSchema = s.looseObject(
   {
